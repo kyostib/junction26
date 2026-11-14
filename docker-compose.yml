@@ -4,16 +4,14 @@ services:
     container_name: bsmeter_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: bsmeter
+      POSTGRES_USER: ${POSTGRES_USER:-bsmeter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-bsmeter}
       PGDATA: /var/lib/postgresql/data/pgdata
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bsmeter} -d ${POSTGRES_DB:-bsmeter}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,9 +22,9 @@ services:
     container_name: bsmeter_api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/bsmeter
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bsmeter}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-bsmeter}
       CONTEXT_DEV_API_KEY: ${CONTEXT_DEV_API_KEY:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
