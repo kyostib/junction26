@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import re
+import time
 from urllib.parse import urlparse
 
 from app.core.config import get_settings
+from app.core.dev_logger import log_dev_api_call
 from app.schemas.evidence import Stance, WebEvidence
 
 logger = logging.getLogger(__name__)
@@ -141,6 +143,15 @@ class ContextDevProvider:
         if not self.api_key:
             raise ProviderUnavailableError("CONTEXT_DEV_API_KEY is not configured")
 
+        query = {
+            "operation": "client.web.scrape",
+            "target": "twitter_profile",
+            "username": clean_user,
+            "url": url,
+            "formats": {"markdown": True},
+            "shared_params": {"main_content_only": True},
+        }
+
         def scrape_sync():
             from context.dev import ContextDev
             client = ContextDev(api_key=self.api_key)
@@ -150,10 +161,26 @@ class ContextDevProvider:
                 shared_params={"main_content_only": True},
             )
 
+        start_time = time.perf_counter()
         try:
             logger.info("Executing Context.dev web.scrape for Twitter profile @%s", clean_user)
             response = await asyncio.wait_for(asyncio.to_thread(scrape_sync), timeout=60)
+            duration_ms = (time.perf_counter() - start_time) * 1000
             markdown = _extract_markdown(response)
+            title = getattr(response, "title", None) or (response.get("title") if isinstance(response, dict) else "")
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.scrape (twitter profile)",
+                query=query,
+                response={
+                    "status": "success",
+                    "title": str(title or ""),
+                    "markdown_length": len(markdown),
+                    "markdown_preview": markdown[:1000] if len(markdown) > 1000 else markdown,
+                },
+                status="SUCCESS",
+                duration_ms=duration_ms,
+            )
             bio, bio_links, tweets = self._parse_profile_and_tweets(clean_user, markdown, max_tweets=max_tweets)
 
             # If direct scrape was blocked by an X login wall, search for public tweets via Context.dev search
@@ -173,6 +200,16 @@ class ContextDevProvider:
                 "tweets": tweets,
             }
         except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.scrape (twitter profile)",
+                query=query,
+                response=None,
+                status="ERROR",
+                duration_ms=duration_ms,
+                error=str(e),
+            )
             logger.warning("Context.dev scrape for @%s encountered error: %s. Trying search fallback.", clean_user, e)
             try:
                 bio, bio_links, tweets = await self._search_tweets_via_context_dev(clean_user, max_tweets=max_tweets)
@@ -193,6 +230,14 @@ class ContextDevProvider:
         """Searches for public tweets and profile snippet from a user using Context.dev web search."""
         logger.info("Executing Context.dev web.search for tweets from @%s", username)
 
+        query = {
+            "operation": "client.web.search",
+            "target": "twitter_search_fallback",
+            "username": username,
+            "query": f'site:x.com/{username} -inurl:search',
+            "num_results": max(10, max_tweets + 3),
+        }
+
         def search_sync():
             from context.dev import ContextDev
             client = ContextDev(api_key=self.api_key)
@@ -201,13 +246,24 @@ class ContextDevProvider:
                 num_results=max(10, max_tweets + 3),
             )
 
+        start_time = time.perf_counter()
         try:
             response = await asyncio.wait_for(asyncio.to_thread(search_sync), timeout=30)
+            duration_ms = (time.perf_counter() - start_time) * 1000
             results = getattr(response, "results", None)
             if results is None and isinstance(response, dict):
                 results = response.get("results", [])
             elif results is None and hasattr(response, "model_dump"):
                 results = response.model_dump().get("results", [])
+
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.search (tweets fallback)",
+                query=query,
+                response={"results_count": len(results or []), "results": results},
+                status="SUCCESS",
+                duration_ms=duration_ms,
+            )
 
             bio = ""
             bio_links = []
@@ -250,13 +306,33 @@ class ContextDevProvider:
             logger.info("Context.dev web search retrieved %d public tweets for @%s", len(tweets), username)
             return bio, bio_links, tweets
         except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.search (tweets fallback)",
+                query=query,
+                response=None,
+                status="ERROR",
+                duration_ms=duration_ms,
+                error=str(e),
+            )
             logger.warning("Context.dev search fallback for @%s failed: %s", username, e)
             return "", [], []
 
     async def scrape_link(self, url: str) -> dict:
         """Uncloaks and scrapes an external link (e.g. t.co) using Context.dev."""
+        query = {
+            "operation": "client.web.scrape",
+            "target": "link_uncloak",
+            "url": url,
+            "formats": {"markdown": True},
+            "shared_params": {"main_content_only": True},
+        }
+
         if not self.api_key:
-            return {"url": url, "domain": urlparse(url).hostname or "", "title": "Demo link", "markdown": "Synthetic page content", "is_scam": False}
+            res = {"url": url, "domain": urlparse(url).hostname or "", "title": "Demo link", "markdown": "Synthetic page content", "is_scam": False}
+            log_dev_api_call(provider="context.dev (demo)", operation="client.web.scrape (demo link)", query=query, response=res, status="DEMO")
+            return res
 
         def scrape_sync():
             from context.dev import ContextDev
@@ -267,18 +343,39 @@ class ContextDevProvider:
                 shared_params={"main_content_only": True},
             )
 
+        start_time = time.perf_counter()
         try:
             logger.info("Executing Context.dev web.scrape for link %s", url)
             response = await asyncio.wait_for(asyncio.to_thread(scrape_sync), timeout=30)
+            duration_ms = (time.perf_counter() - start_time) * 1000
             markdown = _extract_markdown(response)
             title = getattr(response, "title", None) or (response.get("title") if isinstance(response, dict) else "")
-            return {
+            res_dict = {
                 "url": url,
                 "domain": urlparse(url).hostname or "",
                 "title": str(title or ""),
                 "markdown": markdown[:8000],
             }
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.scrape (link uncloak)",
+                query=query,
+                response=res_dict,
+                status="SUCCESS",
+                duration_ms=duration_ms,
+            )
+            return res_dict
         except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.scrape (link uncloak)",
+                query=query,
+                response=None,
+                status="ERROR",
+                duration_ms=duration_ms,
+                error=str(e),
+            )
             logger.warning("Context.dev link scrape failed for %s: %s", url, e)
             return {"url": url, "domain": urlparse(url).hostname or "", "title": "", "markdown": "", "error": str(e)}
 
@@ -293,6 +390,14 @@ class ContextDevProvider:
         if not clean_query or len(clean_query) < 5 or any(x in clean_query.lower() for x in ("log in", "sign up", "onboarding")):
             return []
 
+        query = {
+            "operation": "client.web.search",
+            "target": "research_claim",
+            "claim": claim,
+            "query": clean_query[:200],
+            "num_results": 5,
+        }
+
         def search_sync():
             from context.dev import ContextDev
             client = ContextDev(api_key=self.api_key)
@@ -301,9 +406,11 @@ class ContextDevProvider:
                 num_results=5,
             )
 
+        start_time = time.perf_counter()
         try:
             logger.info("Executing Context.dev web.search for claim: '%s'", clean_query[:80])
             response = await asyncio.wait_for(asyncio.to_thread(search_sync), timeout=45)
+            duration_ms = (time.perf_counter() - start_time) * 1000
             results = getattr(response, "results", None)
             if results is None and hasattr(response, "model_dump"):
                 results = response.model_dump().get("results", [])
@@ -311,6 +418,15 @@ class ContextDevProvider:
                 results = response.get("results", [])
             elif results is None:
                 results = vars(response).get("results", [])
+
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.search (research claim)",
+                query=query,
+                response={"results_count": len(results or []), "results": results},
+                status="SUCCESS",
+                duration_ms=duration_ms,
+            )
 
             evidence = []
             for item in (results or []):
@@ -347,6 +463,16 @@ class ContextDevProvider:
                 )
             return evidence
         except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            log_dev_api_call(
+                provider="context.dev",
+                operation="client.web.search (research claim)",
+                query=query,
+                response=None,
+                status="ERROR",
+                duration_ms=duration_ms,
+                error=str(e),
+            )
             logger.warning("Context.dev web search for '%s' returned: %s. Continuing with empty evidence.", clean_query, e)
             return []
 
@@ -468,7 +594,7 @@ class DemoWebResearchProvider:
     def research_claim_sync(self, claim: str) -> list[WebEvidence]:
         lower = claim.lower()
         if "great wall" in lower:
-            return [
+            results = [
                 WebEvidence(
                     url="https://demo.invalid/space/visibility",
                     title="Demo fixture: Great Wall Moon visibility",
@@ -479,8 +605,8 @@ class DemoWebResearchProvider:
                     stance=Stance.contradicts,
                 )
             ]
-        if "eu adopted" in lower:
-            return [
+        elif "eu adopted" in lower:
+            results = [
                 WebEvidence(
                     url="https://demo.invalid/eu/vehicle-rules",
                     title="Demo fixture: EU 2035 emission targets",
@@ -491,8 +617,8 @@ class DemoWebResearchProvider:
                     stance=Stance.partially_supports,
                 )
             ]
-        if "temperatures have risen" in lower or "climate" in lower:
-            return [
+        elif "temperatures have risen" in lower or "climate" in lower:
+            results = [
                 WebEvidence(
                     url="https://demo.invalid/climate/nasa-record",
                     title="Demo fixture: NASA global temperature records",
@@ -503,17 +629,26 @@ class DemoWebResearchProvider:
                     stance=Stance.supports,
                 )
             ]
-        return [
-            WebEvidence(
-                url="https://demo.invalid/general-context",
-                title="Demo fixture: general reference",
-                source_domain="demo.invalid",
-                excerpt=f"General context regarding: {claim}",
-                relevance=0.5,
-                source_quality=0.6,
-                stance=Stance.context_only,
-            )
-        ]
+        else:
+            results = [
+                WebEvidence(
+                    url="https://demo.invalid/general-context",
+                    title="Demo fixture: general reference",
+                    source_domain="demo.invalid",
+                    excerpt=f"General context regarding: {claim}",
+                    relevance=0.5,
+                    source_quality=0.6,
+                    stance=Stance.context_only,
+                )
+            ]
+        log_dev_api_call(
+            provider="context.dev (demo)",
+            operation="research_claim_sync",
+            query={"claim": claim},
+            response=[e.model_dump() for e in results],
+            status="SUCCESS",
+        )
+        return results
 
     async def research_claim(self, claim: str) -> list[WebEvidence]:
         return self.research_claim_sync(claim)

@@ -1,12 +1,14 @@
 import json
 import logging
 import re
+import time
 from typing import Protocol
 
 import httpx
 
 from app.adapters.social.base import PostData, ProfileData
 from app.core.config import get_settings
+from app.core.dev_logger import log_dev_api_call
 from app.schemas.claims import ClaimExtraction, ClaimType
 from app.schemas.evidence import EvidenceEvaluation, Stance, WebEvidence
 
@@ -50,25 +52,91 @@ class GeminiLLMProvider:
             },
         }
 
+        query = {
+            "provider": "google-gemini",
+            "model": self.model,
+            "url": f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key=[REDACTED]",
+            "payload": payload,
+        }
+        start_time = time.perf_counter()
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-
-            if not resp.is_success:
-                logger.warning("Gemini API call failed with status %s: %s", resp.status_code, resp.text)
-                return None
-
-            data = resp.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                return None
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if not parts:
-                return None
-            text = parts[0].get("text", "")
             try:
-                return json.loads(text)
+                resp = await client.post(url, json=payload)
+                duration_ms = (time.perf_counter() - start_time) * 1000
+
+                if not resp.is_success:
+                    logger.warning("Gemini API call failed with status %s: %s", resp.status_code, resp.text)
+                    log_dev_api_call(
+                        provider="llm",
+                        operation=f"Gemini generateContent ({self.model})",
+                        query=query,
+                        response={"status_code": resp.status_code, "text": resp.text},
+                        status="ERROR",
+                        duration_ms=duration_ms,
+                        error=f"HTTP {resp.status_code}",
+                    )
+                    return None
+
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    log_dev_api_call(
+                        provider="llm",
+                        operation=f"Gemini generateContent ({self.model})",
+                        query=query,
+                        response=data,
+                        status="EMPTY_CANDIDATES",
+                        duration_ms=duration_ms,
+                    )
+                    return None
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if not parts:
+                    log_dev_api_call(
+                        provider="llm",
+                        operation=f"Gemini generateContent ({self.model})",
+                        query=query,
+                        response=data,
+                        status="EMPTY_PARTS",
+                        duration_ms=duration_ms,
+                    )
+                    return None
+                text = parts[0].get("text", "")
+                try:
+                    parsed = json.loads(text)
+                    log_dev_api_call(
+                        provider="llm",
+                        operation=f"Gemini generateContent ({self.model})",
+                        query=query,
+                        response=parsed,
+                        status="SUCCESS",
+                        duration_ms=duration_ms,
+                    )
+                    return parsed
+                except Exception as e:
+                    logger.warning("Failed to parse Gemini JSON response: %s", e)
+                    log_dev_api_call(
+                        provider="llm",
+                        operation=f"Gemini generateContent ({self.model})",
+                        query=query,
+                        response={"raw_text": text},
+                        status="PARSE_ERROR",
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                    return None
             except Exception as e:
-                logger.warning("Failed to parse Gemini JSON response: %s", e)
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                log_dev_api_call(
+                    provider="llm",
+                    operation=f"Gemini generateContent ({self.model})",
+                    query=query,
+                    response=None,
+                    status="ERROR",
+                    duration_ms=duration_ms,
+                    error=str(e),
+                )
+                logger.warning("Gemini API call failed with network error: %s", e)
                 return None
 
     async def extract_claims(self, posts: list[PostData]) -> list[ClaimExtraction]:
@@ -378,6 +446,13 @@ class DemoLLMProvider:
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.factual, importance=0.6))
             else:
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.opinion, importance=0.3))
+        log_dev_api_call(
+            provider="llm (demo)",
+            operation="extract_claims",
+            query={"posts": [{"id": p.platform_post_id, "text": p.text} for p in posts]},
+            response=[c.model_dump() for c in found],
+            status="SUCCESS",
+        )
         return found
 
     async def evaluate_evidence(self, claim: ClaimExtraction, evidence: list[WebEvidence]) -> EvidenceEvaluation:
@@ -438,7 +513,7 @@ class DemoLLMProvider:
         sensationalism = 0.6 if any(x in claim_lower for x in ("unbelievable", "secret", "never seen before", "destroy")) else 0.1
 
         avg_quality = sum(e.source_quality for e, _, _ in evaluated_evidence) / len(evaluated_evidence)
-        return EvidenceEvaluation(
+        res = EvidenceEvaluation(
             accuracy=accuracy,
             evidence_quality=avg_quality,
             misleadingness=misleading,
@@ -446,6 +521,17 @@ class DemoLLMProvider:
             verification_status=status,
             reason=reason,
         )
+        log_dev_api_call(
+            provider="llm (demo)",
+            operation="evaluate_evidence",
+            query={
+                "claim": claim.model_dump() if hasattr(claim, "model_dump") else str(claim),
+                "evidence": [e.model_dump() if hasattr(e, "model_dump") else str(e) for e in evidence],
+            },
+            response=res.model_dump(),
+            status="SUCCESS",
+        )
+        return res
 
     async def evaluate_spam_and_harm(self, posts: list[PostData], scraped_links: list[dict]) -> dict:
         spam_score = 0.0
@@ -480,19 +566,35 @@ class DemoLLMProvider:
             keyword_spam = min(100.0, (spam_keyword_count / total_posts) * 120.0)
             spam_score = max(spam_score, keyword_spam)
 
-        return {
+        res_spam_harm = {
             "spam_score": round(min(100.0, spam_score), 1),
             "harm_score": round(min(100.0, harm_score), 1),
             "spam_flags": list(set(spam_flags))[:3],
             "harm_flags": list(set(harm_flags))[:3],
         }
+        log_dev_api_call(
+            provider="llm (demo)",
+            operation="evaluate_spam_and_harm",
+            query={"posts_count": len(posts), "scraped_links_count": len(scraped_links)},
+            response=res_spam_harm,
+            status="SUCCESS",
+        )
+        return res_spam_harm
 
     async def evaluate_propaganda(self, posts: list[PostData]) -> dict:
         # The demo provider has no language model; report an empty, correctly
         # shaped result rather than presenting keyword matches as LLM judgments.
         from app.pipeline.profile_signals import normalize_propaganda
 
-        return {"status": "unavailable", "techniques": normalize_propaganda([], posts)}
+        res_prop = {"status": "unavailable", "techniques": normalize_propaganda([], posts)}
+        log_dev_api_call(
+            provider="llm (demo)",
+            operation="evaluate_propaganda",
+            query={"posts_count": len(posts)},
+            response=res_prop,
+            status="SUCCESS",
+        )
+        return res_prop
 
     async def synthesize_analysis(
         self,
@@ -613,7 +715,7 @@ class DemoLLMProvider:
                 seen_summaries.add(f["summary"])
                 unique_flags.append(f)
 
-        return {
+        res_synthesis = {
             "bs_index": bs_index,
             "dimensions": {
                 "falsehood": falsehood_score,
@@ -626,6 +728,19 @@ class DemoLLMProvider:
             "summary": summary,
             "top_flags": unique_flags[:5],
         }
+        log_dev_api_call(
+            provider="llm (demo)",
+            operation="synthesize_analysis",
+            query={
+                "username": profile.username,
+                "posts_count": len(posts),
+                "links_count": len(scraped_links),
+                "grounded_claims_count": len(grounded_claims),
+            },
+            response=res_synthesis,
+            status="SUCCESS",
+        )
+        return res_synthesis
 
 
 def get_llm_provider() -> LLMProvider:

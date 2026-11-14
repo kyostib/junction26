@@ -42,7 +42,7 @@ async def batch_twitter_overlay(
 ):
     """Batch lookup for Twitter handles, optimized for sub-50ms Chrome extension rendering."""
     clean_handles = list({clean for h in payload.usernames if h.strip() if (clean := sanitize_handle(h))})
-    logger.info("Batch overlay requested for handles: %s", clean_handles)
+    logger.debug("Batch overlay requested for handles: %s", clean_handles)
     if not clean_handles:
         raise HTTPException(status_code=422, detail="At least one valid X handle is required")
 
