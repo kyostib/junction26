@@ -40,10 +40,6 @@ class GeminiLLMProvider:
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json=payload)
-            if resp.status_code == 404 and "2.0" in self.model:
-                # Fallback to gemini-1.5-flash if 2.0-flash is unavailable on this key
-                fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
-                resp = await client.post(fallback_url, json=payload)
 
             if not resp.is_success:
                 logger.warning("Gemini API call failed with status %s: %s", resp.status_code, resp.text)
