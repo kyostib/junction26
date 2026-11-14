@@ -8,6 +8,10 @@ from app.schemas.evidence import Stance, WebEvidence
 
 logger = logging.getLogger(__name__)
 
+# Evidence source policy is managed here. Add or remove hostnames from this
+# set to control which search results can be used to verify claims.
+EXCLUDED_EVIDENCE_DOMAINS = {"www.x.com"}
+
 
 class ProviderUnavailableError(RuntimeError):
     """Raised when live social data cannot be obtained safely."""
@@ -275,6 +279,10 @@ class ContextDevProvider:
                 url = item_dict.get("url")
                 if not url:
                     continue
+                domain = (urlparse(url).hostname or "").lower()
+                if domain in EXCLUDED_EVIDENCE_DOMAINS:
+                    logger.debug("Skipping excluded evidence source: %s", domain)
+                    continue
 
                 excerpt = item_dict.get("description") or ""
                 md_val = item_dict.get("markdown")
@@ -287,8 +295,6 @@ class ContextDevProvider:
 
                 rel = item_dict.get("relevance", "medium")
                 relevance = rel if isinstance(rel, (int, float)) else {"high": 0.9, "medium": 0.65, "low": 0.35}.get(str(rel).lower(), 0.5)
-                domain = urlparse(url).hostname or ""
-
                 evidence.append(
                     WebEvidence(
                         url=url,
