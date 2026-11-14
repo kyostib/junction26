@@ -13,7 +13,7 @@ from app.pipeline.evaluate_evidence import evaluate_evidence
 from app.pipeline.extract_claims import extract_claims
 from app.pipeline.profile_signals import summarize_claim_evidence
 from app.pipeline.scoring import compute_badge, compute_bs_index, prioritize
-from app.providers.context_dev import ContextDevProvider
+from app.providers.context_dev import ContextDevProvider, is_external_link
 from app.providers.llm import get_llm_provider
 from app.schemas.claims import ClaimExtraction
 
@@ -75,12 +75,13 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         await session.flush()
         post_by_platform_id = {p.platform_post_id: p for p in persisted_posts}
 
-        # 1. Uncloak & inspect links across user's bio and recent tweets
+        # 1. Uncloak & inspect external links across user's bio and recent tweets
+        profile_data.bio_links = [l for l in profile_data.bio_links if is_external_link(l, profile.username)]
         link_sources: dict[str, str] = {}
         for link in profile_data.bio_links:
             link_sources[link] = "bio"
         for link, src in all_post_links.items():
-            if link not in link_sources:
+            if link not in link_sources and is_external_link(link, profile.username):
                 link_sources[link] = src
 
         async def scrape_link_with_source(url: str, src: str) -> dict:
@@ -201,10 +202,36 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "claims_analyzed": len(claims),
             "claims_verified": len(selected),
             "claims": claim_results,
+            "posts": [
+                {
+                    "id": str(item.platform_post_id),
+                    "text": item.text,
+                    "url": str(item.post_url) if item.post_url else f"https://x.com/{profile.username}/status/{item.platform_post_id}",
+                    "links": item.metadata.get("links", []) if isinstance(item.metadata, dict) else [],
+                }
+                for item in posts
+            ],
+            "scraped_links": [
+                {
+                    "url": l.get("url", ""),
+                    "source": l.get("source", "post"),
+                    "domain": l.get("domain", ""),
+                    "title": l.get("title", ""),
+                    "preview": (l.get("markdown") or "")[:250],
+                    "error": l.get("error"),
+                }
+                for l in scraped_links
+                if is_external_link(l.get("url", ""), profile.username)
+                and l.get("domain", "").lower().removeprefix("www.") not in {"x.com", "twitter.com", "mobile.twitter.com"}
+            ],
             "propaganda_profile": propaganda_profile.get("techniques", []),
             "propaganda_analysis_status": propaganda_profile.get("status", "unavailable"),
             "claim_evidence_breakdown": summarize_claim_evidence(claim_results, len(claims)),
-            "scraped_links_count": len(scraped_links),
+            "scraped_links_count": sum(
+                1 for l in scraped_links
+                if is_external_link(l.get("url", ""), profile.username)
+                and l.get("domain", "").lower().removeprefix("www.") not in {"x.com", "twitter.com", "mobile.twitter.com"}
+            ),
             "source_mode": "Context.dev Search & Scrape Gateway",
             "score_note": "A product heuristic based on public posts, Context.dev web grounding, and link uncloaking.",
         }

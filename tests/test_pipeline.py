@@ -185,6 +185,18 @@ Global average temperatures have risen substantially since the late 19th century
     assert "The EU adopted a law" in tweets[0]["text"]
 
 
+def test_is_external_link_filters_share_and_internal_urls():
+    from app.providers.context_dev import is_external_link
+
+    assert not is_external_link("https://x.com/aliceresearch", "aliceresearch")
+    assert not is_external_link("https://twitter.com/aliceresearch", "aliceresearch")
+    assert not is_external_link("https://x.com/share?url=https%3A%2F%2Fx.com")
+    assert not is_external_link("https://twitter.com/intent/tweet?text=hello")
+    assert is_external_link("https://climate-policy.invalid/report", "aliceresearch")
+    assert is_external_link("https://techpolicy.invalid/brief", "aliceresearch")
+    assert is_external_link("https://t.co/abc123xyz", "aliceresearch")
+
+
 @pytest.mark.asyncio
 async def test_mock_adapter_bio_and_limits():
     from app.adapters.social.mock import MockSocialAdapter

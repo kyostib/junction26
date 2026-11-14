@@ -53,9 +53,7 @@
 }
 
 .bs-meter-profile-badge:hover {
-  transform: translateY(-1px) !important;
-  filter: brightness(1.15) !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
+  filter: brightness(1.20) !important;
 }
 
 /* Badge color themes */
@@ -373,6 +371,37 @@
   border: 1px solid rgba(56, 189, 248, 0.3) !important;
 }
 
+/* Tab count highlight badge */
+.bs-tab-count {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(56, 189, 248, 0.16) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.35) !important;
+  border-radius: 9999px !important;
+  padding: 1px 7px !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  margin-left: 6px !important;
+  line-height: 1.2 !important;
+  vertical-align: middle !important;
+  transition: all 0.15s ease !important;
+}
+
+.bs-tab-btn.active .bs-tab-count {
+  background: #38bdf8 !important;
+  color: #0f172a !important;
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.4) !important;
+}
+
+.bs-tab-btn:hover:not(.active) .bs-tab-count {
+  background: rgba(56, 189, 248, 0.28) !important;
+  color: #7dd3fc !important;
+  border-color: rgba(56, 189, 248, 0.55) !important;
+}
+
 /* Modal Body */
 .bs-modal-body {
   padding: 20px 22px !important;
@@ -520,27 +549,29 @@
 }
 
 .bs-stance-supported {
-  background: rgba(16, 185, 129, 0.2) !important;
+  background: rgba(16, 185, 129, 0.12) !important;
   color: #10b981 !important;
-  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
 }
 
 .bs-stance-contradicted {
-  background: rgba(239, 68, 68, 0.2) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
   color: #f87171 !important;
-  border: 1px solid rgba(239, 68, 68, 0.4) !important;
+  border: 1px solid rgba(239, 68, 68, 0.35) !important;
 }
 
-.bs-stance-partially_supported {
-  background: rgba(245, 158, 11, 0.2) !important;
+.bs-stance-partially_supported,
+.bs-stance-missing {
+  background: rgba(245, 158, 11, 0.12) !important;
   color: #f59e0b !important;
-  border: 1px solid rgba(245, 158, 11, 0.4) !important;
+  border: 1px solid rgba(245, 158, 11, 0.35) !important;
 }
 
-.bs-stance-uncertain {
-  background: rgba(148, 163, 184, 0.15) !important;
+.bs-stance-uncertain,
+.bs-stance-unverified {
+  background: rgba(148, 163, 184, 0.1) !important;
   color: #94a3b8 !important;
-  border: 1px solid rgba(148, 163, 184, 0.3) !important;
+  border: 1px solid rgba(148, 163, 184, 0.25) !important;
 }
 
 .bs-claim-reason {
@@ -662,3 +693,234 @@
   text-decoration: underline !important;
   font-size: 11px !important;
 }
+
+/* Clickable stat chips on overview */
+.bs-clickable-stat {
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+.bs-clickable-stat:hover {
+  background: rgba(56, 189, 248, 0.12) !important;
+  border-color: rgba(56, 189, 248, 0.35) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Posts Checked section */
+.bs-post-card {
+  background: rgba(30, 41, 59, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  padding: 12px 14px !important;
+  margin-bottom: 10px !important;
+}
+
+.bs-post-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-bottom: 8px !important;
+}
+
+.bs-post-id-badge {
+  background: rgba(56, 189, 248, 0.15) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+  padding: 2px 8px !important;
+  border-radius: 9999px !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+}
+
+.bs-post-x-link {
+  color: #94a3b8 !important;
+  font-size: 11px !important;
+  text-decoration: none !important;
+  transition: color 0.15s ease !important;
+}
+
+.bs-post-x-link:hover {
+  color: #38bdf8 !important;
+  text-decoration: underline !important;
+}
+
+.bs-post-text {
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  color: #f1f5f9 !important;
+  margin: 0 !important;
+}
+
+.bs-post-links {
+  margin-top: 8px !important;
+  padding-top: 6px !important;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08) !important;
+  font-size: 11px !important;
+  color: #cbd5e1 !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  align-items: center !important;
+}
+
+.bs-post-matched-claims {
+  margin-top: 6px !important;
+  font-size: 11px !important;
+  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.1) !important;
+  border: 1px solid rgba(239, 68, 68, 0.25) !important;
+  border-radius: 6px !important;
+  padding: 6px 8px !important;
+}
+
+/* Links Checked section */
+.bs-link-card {
+  background: rgba(30, 41, 59, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  padding: 12px 14px !important;
+  margin-bottom: 10px !important;
+}
+
+.bs-link-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-bottom: 6px !important;
+}
+
+.bs-link-domain-badge {
+  background: rgba(56, 189, 248, 0.15) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+  padding: 2px 8px !important;
+  border-radius: 9999px !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+}
+
+.bs-link-source-badge {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #94a3b8 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  padding: 2px 7px !important;
+  border-radius: 9999px !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+}
+
+.bs-link-title {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #f8fafc !important;
+  margin-bottom: 4px !important;
+}
+
+.bs-link-url-text {
+  font-size: 11px !important;
+  color: #38bdf8 !important;
+  word-break: break-all !important;
+  margin-bottom: 6px !important;
+}
+
+.bs-link-preview {
+  font-size: 11px !important;
+  color: #cbd5e1 !important;
+  line-height: 1.4 !important;
+  background: rgba(15, 23, 42, 0.6) !important;
+  padding: 8px 10px !important;
+  border-radius: 6px !important;
+  border-left: 2px solid #38bdf8 !important;
+  margin-top: 6px !important;
+}
+
+.bs-link-error-note {
+  font-size: 11px !important;
+  color: #f59e0b !important;
+  margin-top: 6px !important;
+}
+
+.bs-link-item-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-top: 6px !important;
+  font-size: 12px !important;
+  flex-wrap: wrap !important;
+}
+
+.bs-link-icon {
+  font-size: 12px !important;
+}
+
+/* Claim verification breakdown cards with colored numbers */
+.bs-breakdown-chip {
+  border-radius: 10px !important;
+  padding: 12px 10px !important;
+  text-align: center !important;
+  transition: all 0.15s ease !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  box-sizing: border-box !important;
+}
+
+.bs-breakdown-chip-supported {
+  background: rgba(16, 185, 129, 0.12) !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+.bs-breakdown-chip-supported .bs-breakdown-val {
+  color: #10b981 !important;
+}
+.bs-breakdown-chip-supported .bs-breakdown-lbl {
+  color: #34d399 !important;
+}
+
+.bs-breakdown-chip-contradicted {
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+.bs-breakdown-chip-contradicted .bs-breakdown-val {
+  color: #f87171 !important;
+}
+.bs-breakdown-chip-contradicted .bs-breakdown-lbl {
+  color: #fca5a5 !important;
+}
+
+.bs-breakdown-chip-missing {
+  background: rgba(245, 158, 11, 0.12) !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+.bs-breakdown-chip-missing .bs-breakdown-val {
+  color: #f59e0b !important;
+}
+.bs-breakdown-chip-missing .bs-breakdown-lbl {
+  color: #fcd34d !important;
+}
+
+.bs-breakdown-chip-unverified {
+  background: rgba(148, 163, 184, 0.1) !important;
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+.bs-breakdown-chip-unverified .bs-breakdown-val {
+  color: #94a3b8 !important;
+}
+.bs-breakdown-chip-unverified .bs-breakdown-lbl {
+  color: #cbd5e1 !important;
+}
+
+.bs-breakdown-val {
+  font-size: 24px !important;
+  font-weight: 800 !important;
+  line-height: 1.2 !important;
+  margin-bottom: 4px !important;
+}
+
+.bs-breakdown-lbl {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.4px !important;
+}
+

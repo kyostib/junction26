@@ -133,6 +133,8 @@ async def batch_twitter_overlay(
                         "bio": res_data.get("bio", ""),
                         "bio_links": res_data.get("bio_links", []),
                         "posts_analyzed": res_data.get("posts_analyzed", 0),
+                        "posts": res_data.get("posts", []),
+                        "scraped_links": res_data.get("scraped_links", []),
                         "max_tweets_configured": res_data.get("max_tweets_configured", 10),
                         "claims_verified": res_data.get("claims_verified", len(claims_list)),
                         "claims": claims_list,

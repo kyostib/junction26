@@ -178,6 +178,30 @@
     }
   }
 
+  function isExternalLink(value, username = "") {
+    if (!value || typeof value !== "string") return false;
+    const clean = value.trim();
+    try {
+      const url = new URL(clean.startsWith("http") ? clean : "https://" + clean);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+      const domain = (url.hostname || "").toLowerCase().replace(/^www\./, "");
+      if (!domain || domain === "x.com" || domain === "twitter.com" || domain === "mobile.twitter.com") {
+        return false;
+      }
+      const path = (url.pathname || "").toLowerCase();
+      if (path.includes("share") || path.includes("intent")) {
+        return false;
+      }
+      const cleanUser = (username || "").toLowerCase().replace(/^@/, "");
+      if (cleanUser && path.replace(/^\/+/, "").split("/")[0] === cleanUser) {
+        return false;
+      }
+      return domain.includes(".");
+    } catch {
+      return false;
+    }
+  }
+
   function resolveApiUrl(pathOrUrl) {
     if (!pathOrUrl) return null;
     if (typeof pathOrUrl !== "string") return null;
@@ -257,7 +281,6 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:5px;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>Inspect Analysis
           </button>
         </div>
-        <div class="bs-powered-by">Verified via <b>Context.dev</b></div>
       `;
     } else {
       const isAnalyzing = status === "analyzing";
@@ -268,10 +291,6 @@
             <span class="bs-popover-score" style="color:#9ca3af;">${isAnalyzing ? "Verifying..." : "Analyzing..."}</span>
           </div>
         </div>
-        <div style="font-size:11px; color:#9ca3af; line-height:1.45; margin: 10px 0;">
-          Context.dev is scraping recent tweets, uncloaking shortened links, and verifying claims against authoritative web evidence. Results refresh automatically once complete.
-        </div>
-        <div class="bs-powered-by">Powered by <b>Context.dev</b></div>
       `;
     }
 
@@ -354,9 +373,23 @@
     }
 
     const postsAnalyzed = details.posts_analyzed || (data && data.posts_analyzed) || 10;
+    const postsList = details.posts || (data && data.posts) || [];
+    const scrapedLinks = details.scraped_links || (data && data.scraped_links) || [];
     const bioText = (details.bio && details.bio.trim()) ? details.bio : "No bio text provided on this profile.";
     const bioLinks = details.bio_links || [];
     const topFlags = (data && data.top_flags) || [];
+
+    // Filter to strictly external links, discarding Twitter internal and profile/share links
+    const cleanBioLinks = bioLinks.filter((l) => isExternalLink(l, handle));
+    const cleanScrapedLinks = scrapedLinks.filter((l) => {
+      const domain = (l.domain || "").toLowerCase().replace(/^www\./, "");
+      if (domain === "x.com" || domain === "twitter.com" || domain === "mobile.twitter.com") return false;
+      if (!isExternalLink(l.url, handle)) return false;
+      const title = (l.title || "").toLowerCase();
+      if (title.includes("share profile") || title.includes("share on x") || title.includes("on x / x")) return false;
+      return true;
+    });
+    const totalExternalLinks = cleanScrapedLinks.length || cleanBioLinks.length;
 
     let claims = details.claims || [];
     if ((!claims || claims.length === 0) && topFlags.length > 0) {
@@ -376,7 +409,8 @@
     const propaganda = details.propaganda_profile || [];
     const propagandaAvailable = details.propaganda_analysis_status === "analyzed";
     const evidenceBreakdown = details.claim_evidence_breakdown || {};
-    const scrapedLinksCount = details.scraped_links_count || bioLinks.length;
+    const scrapedLinksCount = details.scraped_links_count || (scrapedLinks.length || bioLinks.length);
+    const totalLinks = scrapedLinks.length || bioLinks.length || scrapedLinksCount;
     const rawReportUrl = resolveApiUrl(data && data.report_url);
 
     const levelColor = level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : level === "high" ? "#f87171" : "#9ca3af";
@@ -397,13 +431,25 @@
     }).join("") : `<div class="bs-inspect-card-content">Technique analysis is not available for this report.</div>`;
 
     const evidenceCategories = evidenceBreakdown.categories || [];
-    const evidenceHtml = evidenceCategories.length ? evidenceCategories.map((category) => {
-      const examples = (category.claims || []).slice(0, 2).map((item) => {
-        const sources = (item.evidence || []).slice(0, 2).map((source) => safeHttpUrl(source.url) ? `<a class="bs-evidence-link" href="${escapeHtml(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.source_domain || source.title || "Source")}</a>` : "").join(" · ");
-        return `<div class="bs-signal-example">“${escapeHtml(item.claim || "") }”${item.reason ? `<div class="bs-profile-signal-description">${escapeHtml(item.reason)}</div>` : ""}${sources ? `<div class="bs-profile-signal-description">Sources: ${sources}</div>` : ""}</div>`;
-      }).join("");
-      return `<div class="bs-evidence-category"><div class="bs-profile-signal-heading"><b>${escapeHtml(category.label || "Evidence")}</b><span>${Number(category.count) || 0}</span></div><div class="bs-profile-signal-description">${escapeHtml(category.description || "")}</div>${examples}</div>`;
-    }).join("") : `<div class="bs-inspect-card-content">Evidence breakdown is not available for this report.</div>`;
+    function getEvidenceCount(matchKey) {
+      const found = evidenceCategories.find((c) =>
+        (c.label || "").toLowerCase().includes(matchKey)
+      );
+      if (found && typeof found.count === "number") return found.count;
+      return claims.filter((c) => {
+        const a = (c.assessment || "").toLowerCase();
+        if (matchKey === "support") return a.includes("support") && !a.includes("partial");
+        if (matchKey === "contradict") return a.includes("contradict") || a.includes("false") || a.includes("refut");
+        if (matchKey === "missing") return a.includes("partial") || a.includes("missing");
+        if (matchKey === "unverified") return a.includes("uncertain") || a.includes("unverified");
+        return false;
+      }).length;
+    }
+
+    const countSupported = getEvidenceCount("support");
+    const countContradicted = getEvidenceCount("contradict");
+    const countMissingContext = getEvidenceCount("missing");
+    const countUnverified = getEvidenceCount("unverified");
 
     // Claims HTML
     let claimsHtml = "";
@@ -415,7 +461,7 @@
           stanceClass = "bs-stance-supported";
         } else if (assessment.includes("contradict") || assessment.includes("refut") || assessment.includes("false")) {
           stanceClass = "bs-stance-contradicted";
-        } else if (assessment.includes("partial")) {
+        } else if (assessment.includes("partial") || assessment.includes("missing")) {
           stanceClass = "bs-stance-partially_supported";
         }
 
@@ -447,8 +493,10 @@
     let bioLinksHtml = "";
     if (bioLinks.length > 0) {
       bioLinksHtml = bioLinks.map((l) => `
-        <div style="margin-top:4px;">
-          🔗 ${safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(l)}</a>` : escapeHtml(l)}
+        <div class="bs-link-item-row">
+          <span class="bs-link-icon">🔗</span>
+          ${safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(l)}</a>` : escapeHtml(l)}
+          <span class="bs-link-source-badge">Profile Bio</span>
         </div>
       `).join("");
     } else {
@@ -468,6 +516,197 @@
       flagsDetailHtml = `<div style="color:#10b981; font-size:11px;">✓ No major credibility flags or scam signals detected.</div>`;
     }
 
+    // Section 1: Overview HTML (without stat grid boxes)
+    const overviewHtml = `
+      <!-- Executive Summary -->
+      <div class="bs-summary-box">
+        <div class="bs-summary-label">Executive Credibility Summary</div>
+        <p class="bs-summary-text">${escapeHtml(summary)}</p>
+      </div>
+
+      <!-- Signal Dimensions & Flags -->
+      <div class="bs-inspect-section">
+        <div class="bs-section-title">🚩 Risk Dimensions & Flagged Signals</div>
+        <div class="bs-inspect-card" style="margin-bottom:10px;">
+          <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}%</span></div>
+          <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.falsehood)}%; background:#38bdf8;"></div></div>
+
+          <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))}%</span></div>
+          <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.spam)}%; background:#f59e0b;"></div></div>
+
+          <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}%</span></div>
+          <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.harm)}%; background:#f87171;"></div></div>
+        </div>
+        <div class="bs-inspect-card">
+          <div style="font-weight:700; color:#e2e8f0; margin-bottom:6px; font-size:11px;">Active Flags:</div>
+          ${flagsDetailHtml}
+        </div>
+      </div>
+
+      <!-- Propaganda / Rhetoric Profile -->
+      <div class="bs-inspect-section">
+        <div class="bs-section-title">🧭 Propaganda Technique Profile</div>
+        <div class="bs-inspect-card">
+          <div class="bs-profile-signals">${propagandaHtml}</div>
+        </div>
+      </div>
+    `;
+
+    // Section 2: Posts Checked HTML
+    let postsHtml = "";
+    if (postsList.length > 0) {
+      postsHtml = `
+        <div class="bs-inspect-section">
+          <div class="bs-section-title">💬 Sampled Posts Checked (${postsList.length})</div>
+          ${postsList.map((p, idx) => {
+            const postNum = idx + 1;
+            const postId = p.id || `${postNum}`;
+            const postUrl = p.url || `https://x.com/${handle}/status/${postId}`;
+            const postLinks = p.links || [];
+            const matchedClaims = claims.filter(c => c.post_id === postId || (c.claim && p.text && p.text.toLowerCase().includes(c.claim.toLowerCase().slice(0, 30))));
+
+            return `
+              <div class="bs-post-card">
+                <div class="bs-post-header">
+                  <span class="bs-post-id-badge">Post #${postNum} · ID: ${escapeHtml(postId)}</span>
+                  ${safeHttpUrl(postUrl) ? `<a href="${escapeHtml(safeHttpUrl(postUrl))}" target="_blank" rel="noopener noreferrer" class="bs-post-x-link">View on x.com ↗</a>` : ""}
+                </div>
+                <div class="bs-post-text">“${escapeHtml(p.text || "")}”</div>
+                ${postLinks.length > 0 ? `
+                  <div class="bs-post-links">
+                    <span style="color:#94a3b8; font-weight:600;">Embedded Links:</span>
+                    ${postLinks.map(l => safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">${escapeHtml(l)}</a>` : escapeHtml(l)).join(" ")}
+                  </div>
+                ` : ""}
+                ${matchedClaims.length > 0 ? `
+                  <div class="bs-post-matched-claims">
+                    <span style="font-weight:700;">Flagged Assertion:</span>
+                    ${matchedClaims.map(c => `“${escapeHtml(c.claim || "")}” [${escapeHtml((c.assessment || "evaluated").replace(/_/g, " "))}]`).join("; ")}
+                  </div>
+                ` : ""}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    } else {
+      postsHtml = `
+        <div class="bs-inspect-section">
+          <div class="bs-section-title">💬 Sampled Posts Checked (${postsAnalyzed})</div>
+          <div class="bs-inspect-card">
+            <div class="bs-inspect-card-content">
+              <div style="font-weight:700; color:#f1f5f9; margin-bottom:6px;">Sampled Posts Summary</div>
+              <div>Context.dev sampled <b>${postsAnalyzed} recent posts</b> from @${escapeHtml(handle)} for factual claim extraction, rhetoric patterns, and destination link uncloaking.</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Section 3: Links Checked HTML (Strictly external links)
+    let bioSectionHtml = "";
+    if (cleanBioLinks.length > 0) {
+      bioSectionHtml = `
+        <div class="bs-inspect-card" style="margin-bottom:14px;">
+          <div class="bs-section-title" style="margin-bottom:8px;">👤 Profile Bio External Links</div>
+          <div class="bs-inspect-card-content">
+            <div style="margin-bottom:6px;"><b>Profile Bio:</b> ${escapeHtml(bioText)}</div>
+            <div style="margin-top:8px;">
+              ${cleanBioLinks.map(l => `
+                <div class="bs-link-item-row">
+                  <span class="bs-link-icon">🔗</span>
+                  ${safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(l)}</a>` : escapeHtml(l)}
+                  <span class="bs-link-source-badge">Profile Bio</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    let uncloakedSectionHtml = "";
+    if (cleanScrapedLinks.length > 0) {
+      uncloakedSectionHtml = `
+        <div class="bs-inspect-section">
+          <div class="bs-section-title">🔍 Uncloaked Destination Pages (${cleanScrapedLinks.length})</div>
+          ${cleanScrapedLinks.map((l) => {
+            const url = l.url || "";
+            const domain = l.domain || (url ? (url.split("/")[2] || "") : "External");
+            const source = l.source === "bio" ? "Profile Bio" : (l.source ? `Post ${l.source}` : "Sampled Post");
+            const title = l.title || "External Destination Page";
+            const preview = l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");
+            const isError = Boolean(l.error);
+
+            return `
+              <div class="bs-link-card">
+                <div class="bs-link-header">
+                  <div style="display:flex; align-items:center; gap:8px; flex:1; overflow:hidden;">
+                    <span class="bs-link-domain-badge">${escapeHtml(domain)}</span>
+                    <span class="bs-link-source-badge">${escapeHtml(source)}</span>
+                  </div>
+                  ${safeHttpUrl(url) ? `<a href="${escapeHtml(safeHttpUrl(url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ↗</a>` : ""}
+                </div>
+                <div class="bs-link-title">${escapeHtml(title)}</div>
+                <div class="bs-link-url-text">${safeHttpUrl(url) ? escapeHtml(safeHttpUrl(url)) : escapeHtml(url)}</div>
+                ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview.trim())}…”</div>` : ""}
+                ${isError ? `<div class="bs-link-error-note">⚠️ Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    } else if (cleanBioLinks.length === 0) {
+      uncloakedSectionHtml = `
+        <div class="bs-inspect-section">
+          <div class="bs-section-title">🔗 Links Checked</div>
+          <div class="bs-inspect-card">
+            <div class="bs-inspect-card-content" style="color:#10b981;">
+              ✓ No external links, shortened URLs, or commercial landing pages were detected in this profile's bio or sampled posts.
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const linksHtml = `
+      <div class="bs-inspect-section">
+        <div class="bs-section-title">🔗 External Links Checked (${totalExternalLinks})</div>
+        ${bioSectionHtml}
+        ${uncloakedSectionHtml}
+      </div>
+    `;
+
+    // Section 4: Claims Verified HTML (Evidence Quality condensed into big colored numbers on top)
+    const claimsSectionHtml = `
+      <div class="bs-inspect-section" style="margin-bottom: 20px;">
+        <div class="bs-section-title">🔎 Evidence Quality & Breakdown (${Number(evidenceBreakdown.total) || claims.length} claims)</div>
+        <div class="bs-stat-grid" style="margin-bottom: 0;">
+          <div class="bs-breakdown-chip bs-breakdown-chip-supported">
+            <div class="bs-breakdown-val">${countSupported}</div>
+            <div class="bs-breakdown-lbl">Supported</div>
+          </div>
+          <div class="bs-breakdown-chip bs-breakdown-chip-contradicted">
+            <div class="bs-breakdown-val">${countContradicted}</div>
+            <div class="bs-breakdown-lbl">Contradicted</div>
+          </div>
+          <div class="bs-breakdown-chip bs-breakdown-chip-missing">
+            <div class="bs-breakdown-val">${countMissingContext}</div>
+            <div class="bs-breakdown-lbl">Missing Context</div>
+          </div>
+          <div class="bs-breakdown-chip bs-breakdown-chip-unverified">
+            <div class="bs-breakdown-val">${countUnverified}</div>
+            <div class="bs-breakdown-lbl">Unverified</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bs-inspect-section">
+        <div class="bs-section-title">⚖️ Verified Factual Claims & Web Grounding (${claims.length})</div>
+        ${claimsHtml}
+      </div>
+    `;
+
     backdrop.innerHTML = `
       <div class="bs-inspect-modal" role="dialog" aria-modal="true">
         <!-- Header -->
@@ -481,83 +720,64 @@
           <button id="bsModalClose" class="bs-modal-close-btn" type="button" aria-label="Close">✕</button>
         </div>
 
-        <!-- Body -->
+        <!-- Navigation Tabs with Highlighted Counts -->
+        <div class="bs-modal-tabs" role="tablist">
+          <button id="bsTabOverview" class="bs-tab-btn active" role="tab" aria-selected="true" type="button">📊 Overview</button>
+          <button id="bsTabPosts" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
+            💬 Posts Checked <span class="bs-tab-count">${postsList.length || postsAnalyzed}</span>
+          </button>
+          <button id="bsTabLinks" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
+            🔗 Links Checked <span class="bs-tab-count">${totalExternalLinks}</span>
+          </button>
+          <button id="bsTabClaims" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
+            ⚖️ Claims Verified <span class="bs-tab-count">${claims.length}</span>
+          </button>
+        </div>
+
+        <!-- Body with 4 Sections -->
         <div class="bs-modal-body">
-          <!-- TAB 1: What was analyzed -->
-          <div id="bsTabContentWhat">
-            <!-- Executive Summary -->
-            <div class="bs-summary-box">
-              <div class="bs-summary-label">Executive Credibility Summary</div>
-              <p class="bs-summary-text">${escapeHtml(summary)}</p>
-            </div>
-
-            <!-- Quick Stats Grid -->
-            <div class="bs-stat-grid">
-              <div class="bs-stat-chip">
-                <div class="bs-stat-val">${postsAnalyzed}</div>
-                <div class="bs-stat-lbl">Posts Checked</div>
-              </div>
-              <div class="bs-stat-chip">
-                <div class="bs-stat-val">${scrapedLinksCount}</div>
-                <div class="bs-stat-lbl">Links Uncloaked</div>
-              </div>
-              <div class="bs-stat-chip">
-                <div class="bs-stat-val">${claimsVerified}</div>
-                <div class="bs-stat-lbl">Claims Fact-Checked</div>
-              </div>
-            </div>
-
-            <!-- Profile Bio Section -->
-            <div class="bs-inspect-section">
-              <div class="bs-section-title">👤 Profile Bio & Destination Links</div>
-              <div class="bs-inspect-card">
-                <div class="bs-inspect-card-content">
-                  <div><b>Bio:</b> ${escapeHtml(bioText)}</div>
-                  <div style="margin-top:6px;"><b>Bio Links:</b></div>
-                  ${bioLinksHtml}
-                </div>
-              </div>
-            </div>
-
-            <!-- Grounded Claims -->
-            <div class="bs-inspect-section">
-              <div class="bs-section-title">🧭 Propaganda Technique Profile</div>
-              <div class="bs-inspect-card"><div class="bs-profile-signals">${propagandaHtml}</div><div class="bs-profile-signal-description">${propagandaAvailable ? "An LLM reviewed sampled posts for contextual examples. Findings describe language patterns and do not establish the author's intent." : "LLM technique analysis was unavailable for this report."}</div></div>
-            </div>
-
-            <div class="bs-inspect-section">
-              <div class="bs-section-title">🔎 Claim Evidence Quality (${Number(evidenceBreakdown.total) || 0} claims)</div>
-              <div class="bs-inspect-card"><div class="bs-evidence-breakdown">${evidenceHtml}</div></div>
-            </div>
-
-            <!-- Grounded Claims -->
-            <div class="bs-inspect-section">
-              <div class="bs-section-title">⚖️ Verified Factual Claims & Web Grounding</div>
-              ${claimsHtml}
-            </div>
-
-            <!-- Signal Dimensions & Flags -->
-            <div class="bs-inspect-section">
-              <div class="bs-section-title">🚩 Risk Dimensions & Flagged Signals</div>
-              <div class="bs-inspect-card" style="margin-bottom:10px;">
-                <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}%</span></div>
-                <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.falsehood)}%; background:#38bdf8;"></div></div>
-
-                <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))}%</span></div>
-                <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.spam)}%; background:#f59e0b;"></div></div>
-
-                <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}%</span></div>
-                <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.harm)}%; background:#f87171;"></div></div>
-              </div>
-              <div class="bs-inspect-card">
-                <div style="font-weight:700; color:#e2e8f0; margin-bottom:6px; font-size:11px;">Active Flags:</div>
-                ${flagsDetailHtml}
-              </div>
-            </div>
+          <div id="bsTabContentOverview" style="display:block;">
+            ${overviewHtml}
+          </div>
+          <div id="bsTabContentPosts" style="display:none;">
+            ${postsHtml}
+          </div>
+          <div id="bsTabContentLinks" style="display:none;">
+            ${linksHtml}
+          </div>
+          <div id="bsTabContentClaims" style="display:none;">
+            ${claimsSectionHtml}
           </div>
         </div>
       </div>
     `;
+
+    // Tab switcher logic
+    const tabConfigs = [
+      { btnId: "#bsTabOverview", contentId: "#bsTabContentOverview" },
+      { btnId: "#bsTabPosts", contentId: "#bsTabContentPosts" },
+      { btnId: "#bsTabLinks", contentId: "#bsTabContentLinks" },
+      { btnId: "#bsTabClaims", contentId: "#bsTabContentClaims" },
+    ];
+
+    function selectTab(targetIndex) {
+      tabConfigs.forEach((cfg, idx) => {
+        const btn = backdrop.querySelector(cfg.btnId);
+        const content = backdrop.querySelector(cfg.contentId);
+        if (!btn || !content) return;
+        const isActive = idx === targetIndex;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
+        content.style.display = isActive ? "block" : "none";
+      });
+    }
+
+    tabConfigs.forEach((cfg, idx) => {
+      const btn = backdrop.querySelector(cfg.btnId);
+      if (btn) {
+        btn.onclick = () => selectTab(idx);
+      }
+    });
 
     // Close button events
     const closeBtn = backdrop.querySelector("#bsModalClose");
@@ -607,6 +827,8 @@
                   bio: fullResult.bio || (data.details && data.details.bio),
                   bio_links: fullResult.bio_links || (data.details && data.details.bio_links),
                   posts_analyzed: fullResult.posts_analyzed || (data.details && data.details.posts_analyzed),
+                  posts: fullResult.posts || (data.details && data.details.posts) || [],
+                  scraped_links: fullResult.scraped_links || (data.details && data.details.scraped_links) || [],
                   claims_verified: fullResult.claims_verified || (data.details && data.details.claims_verified),
                   claims: fullResult.claims || (data.details && data.details.claims),
                   scraped_links_count: fullResult.scraped_links_count || (data.details && data.details.scraped_links_count),
