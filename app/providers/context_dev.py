@@ -24,11 +24,25 @@ MEDIA_EXTENSIONS = (
     ".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".flv", ".wmv", ".ts", ".3gp", ".m3u8",
     ".mp3", ".wav", ".ogg", ".aac",
 )
-MEDIA_HOSTS = ("pbs.twimg.com", "video.twimg.com", "twimg.com", "ton.twitter.com")
+MEDIA_HOSTS = frozenset({"pbs.twimg.com", "video.twimg.com", "twimg.com", "ton.twitter.com"})
+TWITTER_DOMAINS = frozenset({"x.com", "twitter.com", "mobile.twitter.com"})
+HIGH_QUALITY_DOMAINS = frozenset({"reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "nature.com", "science.org", "snopes.com", "factcheck.org"})
+RELIABLE_DOMAINS = frozenset({"wikipedia.org", "nytimes.com", "washingtonpost.com", "wsj.com", "theguardian.com"})
+HIGH_QUALITY_SUFFIXES = (".gov", ".gov.uk", ".europa.eu", ".int")
+ACADEMIC_SUFFIXES = (".edu", ".ac.uk")
+
+URL_RE = re.compile(r"https?://[^\s)\]\"'>]+")
+MD_IMAGE_RE = re.compile(r"!\[.*?\]\((https?://[^\s\)]+)\)")
+HTML_IMG_RE = re.compile(r"""<img[^>]+src=["'](https?://[^"']+)["']""", re.IGNORECASE)
+MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)")
+TWEET_AUTHOR_PREFIX_RE = re.compile(r"^[^@\n]+@[a-zA-Z0-9_]+\s*·\s*\w+\s*")
+LATEST_TWEETS_SPLIT_RE = re.compile(r"the latest (?:tweets|posts) from [^:]+:\s*", re.IGNORECASE)
+CLEAN_QUERY_MD_RE = re.compile(r"\[([^\]]+)\]\([^\)]+\)")
+CLEAN_QUERY_URL_RE = re.compile(r"https?://\S+")
 
 
 def extract_urls(text: str) -> list[str]:
-    raw = re.findall(r"https?://[^\s)\]\"'>]+", text)
+    raw = URL_RE.findall(text)
     cleaned = []
     for u in raw:
         c = u.rstrip(".,;:!\"')>")
@@ -47,19 +61,19 @@ def extract_urls(text: str) -> list[str]:
 def extract_image_urls(text: str) -> list[str]:
     images: list[str] = []
     # Markdown image syntax: ![alt](url)
-    for match in re.findall(r"!\[.*?\]\((https?://[^\s\)]+)\)", text):
+    for match in MD_IMAGE_RE.findall(text):
         clean = match.rstrip(".,;:!\"')>")
         if clean not in images:
             images.append(clean)
 
     # HTML <img> tags
-    for match in re.findall(r"""<img[^>]+src=["'](https?://[^"']+)["']""", text, re.IGNORECASE):
+    for match in HTML_IMG_RE.findall(text):
         clean = match.rstrip(".,;:!\"')>")
         if clean not in images:
             images.append(clean)
 
     # Twitter media URLs or direct image extensions
-    for match in re.findall(r"https?://[^\s)\]\"'>]+", text):
+    for match in URL_RE.findall(text):
         clean = match.rstrip(".,;:!\"')>")
         lower = clean.lower()
         if "pbs.twimg.com/media/" in lower or lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
@@ -76,7 +90,7 @@ def is_external_link(url: str, username: str = "") -> bool:
     try:
         parsed = urlparse(url.strip())
         domain = (parsed.hostname or "").lower().removeprefix("www.")
-        if not domain or domain in {"x.com", "twitter.com", "mobile.twitter.com"}:
+        if not domain or domain in TWITTER_DOMAINS:
             return False
         if any(domain == h or domain.endswith("." + h) for h in MEDIA_HOSTS):
             return False
@@ -96,13 +110,13 @@ def is_external_link(url: str, username: str = "") -> bool:
 
 def source_quality(domain: str) -> float:
     domain = domain.lower().removeprefix("www.")
-    if domain.endswith((".gov", ".gov.uk", ".europa.eu", ".int")):
+    if domain.endswith(HIGH_QUALITY_SUFFIXES):
         return 0.95
-    if domain.endswith((".edu", ".ac.uk")):
+    if domain.endswith(ACADEMIC_SUFFIXES):
         return 0.85
-    if domain in {"reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "nature.com", "science.org", "snopes.com", "factcheck.org"}:
+    if domain in HIGH_QUALITY_DOMAINS:
         return 0.85
-    if domain in {"wikipedia.org", "nytimes.com", "washingtonpost.com", "wsj.com", "theguardian.com"}:
+    if domain in RELIABLE_DOMAINS:
         return 0.75
     return 0.55
 
@@ -286,7 +300,7 @@ class ContextDevProvider:
                         bio_candidate = bio_candidate.split(" on X: ", 1)[-1].strip('"').strip("'")
                     if any(x in bio_candidate.lower() for x in ("the latest tweets from", "the latest posts from")):
                         # e.g. "The latest Tweets from Name (@handle). Bio text here."
-                        parts = re.split(r"the latest (?:tweets|posts) from [^:]+:\s*", bio_candidate, flags=re.IGNORECASE)
+                        parts = LATEST_TWEETS_SPLIT_RE.split(bio_candidate)
                         if len(parts) > 1 and len(parts[1]) > 5:
                             bio_candidate = parts[1].strip()
                     bio = bio_candidate
@@ -385,8 +399,8 @@ class ContextDevProvider:
             return DemoWebResearchProvider().research_claim_sync(claim)
 
         # Clean query: strip markdown links and raw URLs
-        clean_query = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", claim)
-        clean_query = re.sub(r"https?://\S+", "", clean_query).strip()
+        clean_query = CLEAN_QUERY_MD_RE.sub(r"\1", claim)
+        clean_query = CLEAN_QUERY_URL_RE.sub("", clean_query).strip()
         if not clean_query or len(clean_query) < 5 or any(x in clean_query.lower() for x in ("log in", "sign up", "onboarding")):
             return []
 
@@ -518,7 +532,7 @@ class ContextDevProvider:
                 current_text.append(line)
                 if len(current_text) >= 2 or len(line) > 100:
                     text = " ".join(current_text)
-                    cleaned_text = re.sub(r"^[^@\n]+@[a-zA-Z0-9_]+\s*·\s*\w+\s*", "", text).strip()
+                    cleaned_text = TWEET_AUTHOR_PREFIX_RE.sub("", text).strip()
                     if len(cleaned_text) > 15:
                         links = extract_urls(cleaned_text)
                         images = extract_image_urls(text)
@@ -534,58 +548,11 @@ class ContextDevProvider:
 
         bio = " ".join(bio_lines).strip()
         bio_links = [l for l in extract_urls(bio) if is_external_link(l, username)]
-        for _, link in re.findall(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)", bio):
+        for _, link in MD_LINK_RE.findall(bio):
             if link not in bio_links and is_external_link(link, username):
                 bio_links.append(link)
 
         return bio, bio_links, tweets
-
-    def _parse_tweets_from_markdown(self, username: str, markdown: str) -> list[dict]:
-        """Parses markdown extracted by Context.dev into individual tweet structures."""
-        _, _, tweets = self._parse_profile_and_tweets(username, markdown, max_tweets=15)
-        return tweets
-
-    def _demo_twitter_profile(self, username: str, max_tweets: int = 10) -> dict:
-        sample_tweets = [
-            {
-                "id": f"{username}-1",
-                "text": "The EU adopted a law targeting new cars with CO2 emissions from 2035; it did not prohibit every existing petrol car.",
-                "links": [],
-                "images": [],
-            },
-            {
-                "id": f"{username}-2",
-                "text": "The Great Wall of China is visible from the Moon with the naked eye. Unbelievable ancient engineering!",
-                "links": [],
-                "images": ["https://demo.invalid/images/great_wall_space_photo.jpg"],
-            },
-            {
-                "id": f"{username}-3",
-                "text": "Check out this secret pre-sale token right now before it 100x! Claim free allocation here: https://airdrop-token-claims.invalid/presale",
-                "links": ["https://airdrop-token-claims.invalid/presale"],
-                "images": ["https://demo.invalid/images/presale_100x_allocation_banner.png"],
-            },
-            {
-                "id": f"{username}-4",
-                "text": "Global average temperatures have risen substantially since the late 19th century, according to NASA data.",
-                "links": ["https://climate.nasa.gov"],
-                "images": ["https://demo.invalid/images/nasa_temperature_trend.png"],
-            },
-            {
-                "id": f"{username}-5",
-                "text": "I love good coffee and quiet weekend mornings.",
-                "links": [],
-                "images": [],
-            },
-        ]
-        return {
-            "username": username,
-            "profile_url": f"https://x.com/{username}",
-            "bio": "Crypto researcher & futurist. Check out our exclusive pre-sale allocation below!",
-            "bio_links": ["https://airdrop-token-claims.invalid/presale"],
-            "raw_markdown": f"# @{username} Profile on X\nCrypto researcher & futurist...",
-            "tweets": sample_tweets[:max_tweets],
-        }
 
 
 class DemoWebResearchProvider:

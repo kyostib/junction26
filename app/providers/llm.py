@@ -36,10 +36,20 @@ class LLMProvider(Protocol):
 class GeminiLLMProvider:
     """Google AI Studio (Gemini) provider using direct AsyncClient REST requests."""
 
-    def __init__(self, api_key: str, model: str = "gemini-4-hydrogen"):
+    def __init__(self, api_key: str, model: str = "gemini-4-hydrogen", client: httpx.AsyncClient | None = None):
         self.api_key = api_key
         self.model = model
         self.fallback_demo = DemoLLMProvider()
+        self._client = client
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
     async def _generate_json(self, prompt: str = "", parts: list[dict] | None = None) -> dict | list | None:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
@@ -60,84 +70,84 @@ class GeminiLLMProvider:
         }
         start_time = time.perf_counter()
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                resp = await client.post(url, json=payload)
-                duration_ms = (time.perf_counter() - start_time) * 1000
+        client = await self._get_client()
+        try:
+            resp = await client.post(url, json=payload)
+            duration_ms = (time.perf_counter() - start_time) * 1000
 
-                if not resp.is_success:
-                    logger.warning("Gemini API call failed with status %s: %s", resp.status_code, resp.text)
-                    log_dev_api_call(
-                        provider="llm",
-                        operation=f"Gemini generateContent ({self.model})",
-                        query=query,
-                        response={"status_code": resp.status_code, "text": resp.text},
-                        status="ERROR",
-                        duration_ms=duration_ms,
-                        error=f"HTTP {resp.status_code}",
-                    )
-                    return None
-
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    log_dev_api_call(
-                        provider="llm",
-                        operation=f"Gemini generateContent ({self.model})",
-                        query=query,
-                        response=data,
-                        status="EMPTY_CANDIDATES",
-                        duration_ms=duration_ms,
-                    )
-                    return None
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if not parts:
-                    log_dev_api_call(
-                        provider="llm",
-                        operation=f"Gemini generateContent ({self.model})",
-                        query=query,
-                        response=data,
-                        status="EMPTY_PARTS",
-                        duration_ms=duration_ms,
-                    )
-                    return None
-                text = parts[0].get("text", "")
-                try:
-                    parsed = json.loads(text)
-                    log_dev_api_call(
-                        provider="llm",
-                        operation=f"Gemini generateContent ({self.model})",
-                        query=query,
-                        response=parsed,
-                        status="SUCCESS",
-                        duration_ms=duration_ms,
-                    )
-                    return parsed
-                except Exception as e:
-                    logger.warning("Failed to parse Gemini JSON response: %s", e)
-                    log_dev_api_call(
-                        provider="llm",
-                        operation=f"Gemini generateContent ({self.model})",
-                        query=query,
-                        response={"raw_text": text},
-                        status="PARSE_ERROR",
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
-                    return None
-            except Exception as e:
-                duration_ms = (time.perf_counter() - start_time) * 1000
+            if not resp.is_success:
+                logger.warning("Gemini API call failed with status %s: %s", resp.status_code, resp.text)
                 log_dev_api_call(
                     provider="llm",
                     operation=f"Gemini generateContent ({self.model})",
                     query=query,
-                    response=None,
+                    response={"status_code": resp.status_code, "text": resp.text},
                     status="ERROR",
+                    duration_ms=duration_ms,
+                    error=f"HTTP {resp.status_code}",
+                )
+                return None
+
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if not candidates:
+                log_dev_api_call(
+                    provider="llm",
+                    operation=f"Gemini generateContent ({self.model})",
+                    query=query,
+                    response=data,
+                    status="EMPTY_CANDIDATES",
+                    duration_ms=duration_ms,
+                )
+                return None
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                log_dev_api_call(
+                    provider="llm",
+                    operation=f"Gemini generateContent ({self.model})",
+                    query=query,
+                    response=data,
+                    status="EMPTY_PARTS",
+                    duration_ms=duration_ms,
+                )
+                return None
+            text = parts[0].get("text", "")
+            try:
+                parsed = json.loads(text)
+                log_dev_api_call(
+                    provider="llm",
+                    operation=f"Gemini generateContent ({self.model})",
+                    query=query,
+                    response=parsed,
+                    status="SUCCESS",
+                    duration_ms=duration_ms,
+                )
+                return parsed
+            except Exception as e:
+                logger.warning("Failed to parse Gemini JSON response: %s", e)
+                log_dev_api_call(
+                    provider="llm",
+                    operation=f"Gemini generateContent ({self.model})",
+                    query=query,
+                    response={"raw_text": text},
+                    status="PARSE_ERROR",
                     duration_ms=duration_ms,
                     error=str(e),
                 )
-                logger.warning("Gemini API call failed with network error: %s", e)
                 return None
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            log_dev_api_call(
+                provider="llm",
+                operation=f"Gemini generateContent ({self.model})",
+                query=query,
+                response=None,
+                status="ERROR",
+                duration_ms=duration_ms,
+                error=str(e),
+            )
+            logger.warning("Gemini API call failed with network error: %s", e)
+            return None
 
     async def extract_claims(self, posts: list[PostData]) -> list[ClaimExtraction]:
         post_items = [{"id": p.platform_post_id, "text": p.text} for p in posts]
@@ -613,8 +623,6 @@ class DemoLLMProvider:
             domain = link.get("domain", "")
             title = (link.get("title") or "").lower()
             text = (link.get("markdown") or "").lower()
-            source = link.get("source", "post")
-            source_label = f"in post ({source})"
 
             combined_link_text = f"{url} {title} {text}".lower()
             if any(x in combined_link_text for x in ("airdrop", "presale", "token-claim", "free allocation", "crypto-drain")):

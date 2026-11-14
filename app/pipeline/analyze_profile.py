@@ -15,7 +15,6 @@ from app.pipeline.profile_signals import summarize_claim_evidence
 from app.pipeline.scoring import compute_badge, compute_bs_index, prioritize
 from app.providers.context_dev import ContextDevProvider, is_external_link
 from app.providers.llm import get_llm_provider
-from app.schemas.claims import ClaimExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +96,15 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 logger.warning("Scraping link %s failed: %s", url, e)
                 return {"url": url, "source": src, "domain": "", "title": "", "markdown": "", "error": str(e)}
 
-        links_to_scrape = list(link_sources.items())[:6]
-        scraped_links = await asyncio.gather(*(scrape_link_with_source(u, s) for u, s in links_to_scrape))
-
         llm = get_llm_provider()
 
-        # 2. Extract verifiable factual claims from text
-        claims = await extract_claims(posts, llm)
-        propaganda_profile = await llm.evaluate_propaganda(posts)
+        # 1 & 2. Concurrently scrape external links from posts, extract claims, and evaluate rhetoric/propaganda
+        links_to_scrape = list(link_sources.items())[:6]
+        scraped_links, claims, propaganda_profile = await asyncio.gather(
+            asyncio.gather(*(scrape_link_with_source(u, s) for u, s in links_to_scrape)),
+            extract_claims(posts, llm),
+            llm.evaluate_propaganda(posts),
+        )
 
         # Persist claims using unique claim IDs
         claim_rows = {}
@@ -123,7 +123,7 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             claim_rows[item.id] = row
         await session.flush()
 
-        # 3. Ground truth research via Context.dev Web Search (parallelized)
+        # 3. Ground truth research via Context.dev Web Search (pipelined with evaluation)
         selected = prioritize(claims, settings.max_claims_to_verify)
 
         async def research_claim_safe(claim_text: str):
@@ -133,12 +133,18 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 logger.warning("Researching claim '%s' failed: %s", claim_text, e)
                 return []
 
-        all_evidence = await asyncio.gather(*(research_claim_safe(item.text) for item in selected)) if selected else []
-        all_evaluations = (
-            await asyncio.gather(*(evaluate_evidence(item, ev, llm) for item, ev in zip(selected, all_evidence)))
+        async def research_and_evaluate(item):
+            ev = await research_claim_safe(item.text)
+            eval_result = await evaluate_evidence(item, ev, llm)
+            return ev, eval_result
+
+        eval_pairs = (
+            await asyncio.gather(*(research_and_evaluate(item) for item in selected))
             if selected
             else []
         )
+        all_evidence = [p[0] for p in eval_pairs]
+        all_evaluations = [p[1] for p in eval_pairs]
 
         claim_results = []
         for item, evidence, evaluation in zip(selected, all_evidence, all_evaluations):
@@ -190,6 +196,19 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         badge_level, badge_label = compute_badge(bs_index)
 
         completed_now = datetime.now(timezone.utc)
+        filtered_scraped_links = [
+            {
+                "url": l.get("url", ""),
+                "source": l.get("source", "post"),
+                "domain": l.get("domain", ""),
+                "title": l.get("title", ""),
+                "preview": (l.get("markdown") or "")[:250],
+                "error": l.get("error"),
+            }
+            for l in scraped_links
+            if is_external_link(l.get("url", ""), profile.username)
+            and l.get("domain", "").lower().removeprefix("www.") not in {"x.com", "twitter.com", "mobile.twitter.com"}
+        ]
         result = {
             "bs_index": bs_index,
             "overall_score": bs_index,
@@ -202,7 +221,7 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "bio_links": [],
             "posts_analyzed": len(posts),
             "max_tweets_configured": max_tweets,
-            "factual_claims": sum(c.claim_type.value == "factual" for c in claims),
+            "factual_claims": sum(getattr(c.claim_type, "value", c.claim_type) == "factual" for c in claims),
             "claims_analyzed": len(claims),
             "claims_verified": len(selected),
             "claims": claim_results,
@@ -215,27 +234,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 }
                 for item in posts
             ],
-            "scraped_links": [
-                {
-                    "url": l.get("url", ""),
-                    "source": l.get("source", "post"),
-                    "domain": l.get("domain", ""),
-                    "title": l.get("title", ""),
-                    "preview": (l.get("markdown") or "")[:250],
-                    "error": l.get("error"),
-                }
-                for l in scraped_links
-                if is_external_link(l.get("url", ""), profile.username)
-                and l.get("domain", "").lower().removeprefix("www.") not in {"x.com", "twitter.com", "mobile.twitter.com"}
-            ],
+            "scraped_links": filtered_scraped_links,
             "propaganda_profile": propaganda_profile.get("techniques", []),
             "propaganda_analysis_status": propaganda_profile.get("status", "unavailable"),
             "claim_evidence_breakdown": summarize_claim_evidence(claim_results, len(claims)),
-            "scraped_links_count": sum(
-                1 for l in scraped_links
-                if is_external_link(l.get("url", ""), profile.username)
-                and l.get("domain", "").lower().removeprefix("www.") not in {"x.com", "twitter.com", "mobile.twitter.com"}
-            ),
+            "scraped_links_count": len(filtered_scraped_links),
             "source_mode": "Context.dev Search & Scrape Gateway",
             "score_note": "A product heuristic based on public posts, Context.dev web grounding, and link uncloaking.",
         }
@@ -272,3 +275,6 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         except Exception:
             logger.exception("Failed to mark analysis %s as failed", analysis_id)
         raise
+    finally:
+        if "llm" in locals() and hasattr(llm, "aclose"):
+            await llm.aclose()

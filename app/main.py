@@ -49,12 +49,13 @@ app.include_router(analysis_router)
 app.include_router(overlay_router)
 
 WEB_DIR = Path(__file__).parent / "web"
+INDEX_HTML = WEB_DIR / "index.html"
 app.mount("/web", StaticFiles(directory=WEB_DIR), name="web")
 
 
 @app.get("/", include_in_schema=False)
 async def landing_page():
-    return FileResponse(WEB_DIR / "index.html")
+    return FileResponse(INDEX_HTML)
 
 
 @app.get("/health")

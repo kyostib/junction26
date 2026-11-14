@@ -3,7 +3,7 @@ const input = document.querySelector('#profile-input');
 const button = document.querySelector('#scan-button');
 const statusBox = document.querySelector('#scan-status');
 const resultBox = document.querySelector('#scan-result');
-const API_BASE = 'https://api.bsmeter.tech';
+const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 document.querySelector('.example').addEventListener('click', () => {
   input.value = 'elonmusk';
@@ -35,7 +35,7 @@ function renderResult(analysis, handle) {
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  return String(value).replace(/[&<>"']/g, char => HTML_ESCAPE_MAP[char]);
 }
 
 function safeUrl(value) {

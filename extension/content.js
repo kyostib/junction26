@@ -287,18 +287,16 @@
 
   // All report fields originate outside the extension (posts, model output,
   // and web-search results). Never interpolate them into HTML unescaped.
+  const HTML_ESCAPE_MAP = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#39;",
+    '"': "&quot;",
+  };
+
   function escapeHtml(value) {
-    return String(value ?? "").replace(
-      /[&<>'"]/g,
-      (char) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          "'": "&#39;",
-          '"': "&quot;",
-        })[char],
-    );
+    return String(value ?? "").replace(/[&<>'"]/g, (char) => HTML_ESCAPE_MAP[char]);
   }
 
   function safeHttpUrl(value) {
@@ -330,12 +328,12 @@
     ".flv",
     ".wmv",
   ];
-  const MEDIA_HOSTS = [
+  const MEDIA_HOSTS = new Set([
     "pbs.twimg.com",
     "video.twimg.com",
     "twimg.com",
     "ton.twitter.com",
-  ];
+  ]);
 
   function isExternalLink(value, username = "") {
     if (!value || typeof value !== "string") return false;
@@ -351,7 +349,7 @@
         domain === "x.com" ||
         domain === "twitter.com" ||
         domain === "mobile.twitter.com" ||
-        MEDIA_HOSTS.includes(domain)
+        MEDIA_HOSTS.has(domain)
       ) {
         return false;
       }
@@ -596,10 +594,7 @@
           : [],
       }));
     }
-    const claimsVerified = details.claims_verified || claims.length;
     const propaganda = details.propaganda_profile || [];
-    const propagandaAvailable =
-      details.propaganda_analysis_status === "analyzed";
     const propagandaScore =
       typeof dims.propaganda === "number"
         ? dims.propaganda
@@ -613,27 +608,6 @@
       (item) => (Number(item.score) || 0) > 0 || (Number(item.count) || 0) > 0,
     ).length;
     const evidenceBreakdown = details.claim_evidence_breakdown || {};
-    const scrapedLinksCount =
-      details.scraped_links_count || cleanScrapedLinks.length;
-    const totalLinks = cleanScrapedLinks.length;
-    const rawReportUrl = resolveApiUrl(data && data.report_url);
-
-    const levelColor =
-      level === "low"
-        ? "#10b981"
-        : level === "medium"
-          ? "#f59e0b"
-          : level === "high"
-            ? "#f87171"
-            : "#9ca3af";
-    const levelText =
-      level === "low"
-        ? "Low Risk / Clean"
-        : level === "medium"
-          ? "Moderate Risk"
-          : level === "high"
-            ? "High Risk"
-            : "Pending";
 
     const propagandaHtml = propaganda.length
       ? propaganda
@@ -1755,9 +1729,13 @@
 
   window.addEventListener("popstate", () => setTimeout(checkCurrentPage, 60));
 
-  // Monitor DOM mutations (React view updates)
+  // Monitor DOM mutations (React view updates) with rAF debouncing
+  let mutationRaf = null;
   const observer = new MutationObserver(() => {
-    if (currentProfileHandle) {
+    if (!currentProfileHandle || mutationRaf) return;
+    mutationRaf = requestAnimationFrame(() => {
+      mutationRaf = null;
+      if (!currentProfileHandle) return;
       const badge = document.querySelector(
         `.bs-meter-profile-badge[data-handle="${currentProfileHandle}"]`,
       );
@@ -1777,7 +1755,7 @@
       } else if (badge && target) {
         syncBadgeVerticalAlignment(wrapper, badge, target);
       }
-    }
+    });
   });
 
   if (document.body) {

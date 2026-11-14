@@ -13,10 +13,21 @@ TECHNIQUES = (
 )
 
 
+CLAIM_CATEGORIES = {
+    "supported": {"label": "Supported", "description": "Backed by relevant, reliable sources."},
+    "contradicted": {"label": "Contradicted", "description": "Conflicts with reliable evidence."},
+    "missing_context": {"label": "Missing context", "description": "Partially supported or lacks key context."},
+    "unverified": {"label": "Unverified", "description": "Could not be verified with the available evidence."},
+}
+
+
 def normalize_propaganda(raw: object, posts: list) -> list[dict]:
     """Validate model technique scores and retain evidence tied to supplied posts."""
     items = {item.get("key"): item for item in raw if isinstance(item, dict)} if isinstance(raw, list) else {}
-    post_by_id = {str(post.platform_post_id): post for post in posts}
+    post_lookup = {
+        str(post.platform_post_id): (post.text.casefold(), post.text[:280])
+        for post in posts
+    }
     result = []
     for key, name, description in TECHNIQUES:
         item = items.get(key, {})
@@ -30,12 +41,19 @@ def normalize_propaganda(raw: object, posts: list) -> list[dict]:
             if not isinstance(example, dict):
                 continue
             post_id = str(example.get("post_id", ""))
-            post = post_by_id.get(post_id)
+            if post_id in seen:
+                continue
+            post_info = post_lookup.get(post_id)
+            if post_info is None:
+                continue
             quote = str(example.get("matched_text", "")).strip()
-            if post is None or not quote or quote.casefold() not in post.text.casefold() or post_id in seen:
+            if not quote:
+                continue
+            text_cf, text_preview = post_info
+            if quote.casefold() not in text_cf:
                 continue
             seen.add(post_id)
-            examples.append({"post_id": post_id, "text": post.text[:280], "matched_text": quote[:280], "reason": str(example.get("reason", ""))[:300]})
+            examples.append({"post_id": post_id, "text": text_preview, "matched_text": quote[:280], "reason": str(example.get("reason", ""))[:300]})
         # A non-zero score must be supported by at least one validated example.
         if not examples:
             score = 0.0
@@ -44,13 +62,7 @@ def normalize_propaganda(raw: object, posts: list) -> list[dict]:
 
 
 def summarize_claim_evidence(claims: list[dict], total_claims: int) -> dict:
-    categories = {
-        "supported": {"label": "Supported", "description": "Backed by relevant, reliable sources."},
-        "contradicted": {"label": "Contradicted", "description": "Conflicts with reliable evidence."},
-        "missing_context": {"label": "Missing context", "description": "Partially supported or lacks key context."},
-        "unverified": {"label": "Unverified", "description": "Could not be verified with the available evidence."},
-    }
-    buckets = {key: {**value, "count": 0, "claims": []} for key, value in categories.items()}
+    buckets = {key: {**value, "count": 0, "claims": []} for key, value in CLAIM_CATEGORIES.items()}
     for claim in claims:
         assessment = str(claim.get("assessment", "uncertain")).lower()
         evidence = claim.get("evidence") or []
