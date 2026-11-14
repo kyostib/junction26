@@ -555,36 +555,13 @@
               </div>
             </div>
           </div>
+        </div>
       </div>
     `;
-
-    // Tab switcher events
-    const tabWhat = backdrop.querySelector("#bsTabWhat");
-    const tabHow = backdrop.querySelector("#bsTabHow");
-    const contentWhat = backdrop.querySelector("#bsTabContentWhat");
-    const contentHow = backdrop.querySelector("#bsTabContentHow");
-
-    if (tabWhat && tabHow && contentWhat && contentHow) {
-      tabWhat.onclick = () => {
-        tabWhat.classList.add("active");
-        tabHow.classList.remove("active");
-        contentWhat.style.display = "block";
-        contentHow.style.display = "none";
-      };
-
-      tabHow.onclick = () => {
-        tabHow.classList.add("active");
-        tabWhat.classList.remove("active");
-        contentWhat.style.display = "none";
-        contentHow.style.display = "block";
-      };
-    }
 
     // Close button events
     const closeBtn = backdrop.querySelector("#bsModalClose");
     if (closeBtn) closeBtn.onclick = closeInspectModal;
-    const footerCloseBtn = backdrop.querySelector("#bsModalCloseFooter");
-    if (footerCloseBtn) footerCloseBtn.onclick = closeInspectModal;
 
     // Prevent closing when clicking inside modal
     const modalDialog = backdrop.querySelector(".bs-inspect-modal");

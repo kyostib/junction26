@@ -176,11 +176,20 @@ async def batch_twitter_overlay(
                     )
                     continue
 
-            # If stale or failed, enqueue a new analysis
-            new_analysis = Analysis(profile_id=prof.id, status="queued")
-            db.add(new_analysis)
-            await db.flush()
-            tasks.add_task(run_analysis, new_analysis.id)
+            # If stale or failed, enqueue a new analysis if none is already active
+            active_stmt = select(Analysis).where(
+                Analysis.profile_id == prof.id,
+                Analysis.status.in_(["queued", "running"]),
+            )
+            existing_active = (await db.execute(active_stmt)).scalars().first()
+            if not existing_active:
+                new_analysis = Analysis(profile_id=prof.id, status="queued")
+                db.add(new_analysis)
+                try:
+                    await db.flush()
+                    tasks.add_task(run_analysis, new_analysis.id)
+                except Exception:
+                    await db.rollback()
             results[handle] = UserOverlayResponse(
                 username=handle,
                 status="queued",
@@ -194,13 +203,30 @@ async def batch_twitter_overlay(
                 profile_url=f"https://x.com/{handle}",
             )
             db.add(new_profile)
-            await db.flush()
+            try:
+                await db.flush()
+            except Exception:
+                await db.rollback()
+                stmt_refetch = select(Profile).where(Profile.platform == "twitter", Profile.username == handle)
+                new_profile = (await db.execute(stmt_refetch)).scalar_one_or_none()
+                if not new_profile:
+                    results[handle] = UserOverlayResponse(username=handle, status="unknown")
+                    continue
 
-            new_analysis = Analysis(profile_id=new_profile.id, status="queued")
-            db.add(new_analysis)
-            await db.flush()
+            active_stmt = select(Analysis).where(
+                Analysis.profile_id == new_profile.id,
+                Analysis.status.in_(["queued", "running"]),
+            )
+            existing_active = (await db.execute(active_stmt)).scalars().first()
+            if not existing_active:
+                new_analysis = Analysis(profile_id=new_profile.id, status="queued")
+                db.add(new_analysis)
+                try:
+                    await db.flush()
+                    tasks.add_task(run_analysis, new_analysis.id)
+                except Exception:
+                    await db.rollback()
 
-            tasks.add_task(run_analysis, new_analysis.id)
             results[handle] = UserOverlayResponse(
                 username=handle,
                 status="queued",

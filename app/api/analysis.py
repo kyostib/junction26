@@ -57,11 +57,33 @@ async def create_analysis(
     if not profile:
         profile = Profile(platform=platform, username=username, profile_url=profile_url)
         db.add(profile)
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            await db.rollback()
+            profile = (await db.execute(stmt)).scalar_one_or_none()
+            if not profile:
+                raise
+
+    # Deduplicate active analysis: if one is already queued or running, return it
+    active_stmt = select(Analysis).where(
+        Analysis.profile_id == profile.id,
+        Analysis.status.in_(["queued", "running"]),
+    )
+    existing_active = (await db.execute(active_stmt)).scalars().first()
+    if existing_active:
+        return AnalysisQueued(analysis_id=existing_active.id)
 
     analysis = Analysis(profile_id=profile.id, status="queued")
     db.add(analysis)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        existing_active = (await db.execute(active_stmt)).scalars().first()
+        if existing_active:
+            return AnalysisQueued(analysis_id=existing_active.id)
+        raise
 
     tasks.add_task(run_analysis, analysis.id)
     return AnalysisQueued(analysis_id=analysis.id)
