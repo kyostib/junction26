@@ -318,8 +318,177 @@
     return null;
   }
 
+  // Find the profile action buttons row (follow, chat, and three dots buttons)
+  function findProfileActionsTarget() {
+    const root = document.querySelector('div[data-testid="primaryColumn"]') || document;
+    const tabList = root.querySelector('[role="tablist"], [data-testid="ScrollSnap-List"]');
+
+    const buttonCandidates = [
+      // Three dots / More options
+      '[data-testid="userActions"]',
+      'button[aria-label="More"]',
+      'button[aria-label="More options"]',
+      'div[role="button"][aria-label="More"]',
+      'div[role="button"][aria-label="More options"]',
+      // Chat / Direct Message
+      '[data-testid="sendDMFromProfile"]',
+      'a[href*="/messages/"][role="link"]',
+      'div[role="button"][aria-label*="Message"]',
+      'button[aria-label*="Message"]',
+      // Follow / Unfollow
+      '[data-testid$="-follow"]',
+      '[data-testid$="-unfollow"]',
+      '[data-testid="placementTracking"]',
+      '[data-testid="userFollowIndicator"]',
+      // Notification / Subscribe
+      '[data-testid="userFollowNotificationButton"]',
+      '[data-testid="subscribe"]',
+      // Edit Profile (own account)
+      '[data-testid="editProfileButton"]',
+      '[data-testid="ProfileHeader_EditProfile_Button"]',
+      'a[href="/settings/profile"]'
+    ];
+
+    const foundButtons = [];
+    for (const sel of buttonCandidates) {
+      const el = root.querySelector(sel);
+      if (el) {
+        if (tabList) {
+          const isBeforeTabs = (el.compareDocumentPosition(tabList) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+          if (!isBeforeTabs) continue;
+        }
+        if (!foundButtons.includes(el)) {
+          foundButtons.push(el);
+        }
+      }
+    }
+
+    if (foundButtons.length === 0) {
+      return null;
+    }
+
+    // Identify the actions row container holding these action buttons
+    let container = null;
+    let referenceNode = null;
+
+    // Check ancestors to find a shared flex container holding 2+ buttons
+    for (const btn of foundButtons) {
+      let p = btn.parentElement;
+      while (p && p !== root && p !== document.body) {
+        const matches = foundButtons.filter((b) => p.contains(b));
+        if (matches.length >= 2) {
+          container = p;
+          break;
+        }
+        p = p.parentElement;
+      }
+      if (container) break;
+    }
+
+    // If only one button exists (e.g., own profile or only Follow button), find its direct button-group wrapper
+    if (!container) {
+      const primaryBtn = foundButtons[0];
+      let p = primaryBtn.parentElement;
+      while (p && p !== root && p !== document.body) {
+        const style = window.getComputedStyle(p);
+        if (style.display.includes("flex") && style.flexDirection.includes("row")) {
+          container = p;
+          break;
+        }
+        p = p.parentElement;
+      }
+      if (!container) {
+        container = primaryBtn.parentElement;
+      }
+    }
+
+    if (container) {
+      // Find the direct child of container that contains or is the first found button
+      for (const child of container.children) {
+        if (foundButtons.some((b) => b === child || child.contains(b))) {
+          referenceNode = child;
+          break;
+        }
+      }
+      if (!referenceNode) {
+        referenceNode = container.firstElementChild;
+      }
+    }
+
+    return container ? { container, referenceNode } : null;
+  }
+
+  // Ensure BS score badge matches the exact rendered height and top-left placement of neighboring action buttons
+  function syncBadgeVerticalAlignment(wrapper, badge, target) {
+    if (!badge || !target || !target.container) return;
+
+    const ref = target.referenceNode || target.container.firstElementChild;
+    if (!ref) return;
+
+    let candidateBtn = null;
+    if (typeof ref.matches === "function" && ref.matches('[role="button"], button, a')) {
+      candidateBtn = ref;
+    } else if (typeof ref.querySelector === "function") {
+      candidateBtn = ref.querySelector('[role="button"], button, a') || ref;
+    } else {
+      candidateBtn = ref;
+    }
+
+    if (!candidateBtn || candidateBtn === badge) {
+      candidateBtn = target.container.querySelector(
+        '[data-testid="userActions"], [data-testid="sendDMFromProfile"], [data-testid$="-follow"], [data-testid$="-unfollow"], [data-testid="editProfileButton"], [role="button"], button'
+      );
+    }
+
+    if (!candidateBtn || candidateBtn === badge) return;
+
+    const btnRect = candidateBtn.getBoundingClientRect();
+    if (!btnRect || btnRect.height <= 0) return;
+
+    // Match the exact rendered height of the other buttons (typically 32px or 34px)
+    const targetHeight = Math.round(btnRect.height);
+    if (targetHeight >= 20 && targetHeight <= 60) {
+      badge.style.setProperty("height", `${targetHeight}px`, "important");
+      badge.style.setProperty("min-height", `${targetHeight}px`, "important");
+      badge.style.setProperty("max-height", `${targetHeight}px`, "important");
+    }
+
+    // Both wrapper and badge are anchored to the TOP-LEFT corner of each flex box
+    if (wrapper) {
+      wrapper.style.setProperty("display", "flex", "important");
+      wrapper.style.setProperty("flex-direction", "column", "important");
+      wrapper.style.setProperty("align-self", "flex-start", "important");
+      wrapper.style.setProperty("align-items", "flex-start", "important");
+      wrapper.style.setProperty("justify-content", "flex-start", "important");
+      wrapper.style.setProperty("border", "none", "important");
+      wrapper.style.setProperty("outline", "none", "important");
+      wrapper.style.setProperty("background", "transparent", "important");
+      wrapper.style.setProperty("box-shadow", "none", "important");
+      wrapper.style.setProperty("margin-top", "0px", "important");
+      wrapper.style.setProperty("margin-bottom", "0px", "important");
+    }
+
+    badge.style.setProperty("align-self", "flex-start", "important");
+    badge.style.setProperty("margin-top", "0px", "important");
+    badge.style.setProperty("margin-bottom", "0px", "important");
+    badge.style.setProperty("vertical-align", "top", "important");
+
+    // Dynamic top-edge alignment check: ensure badge.top matches neighboring button.top
+    const badgeRect = badge.getBoundingClientRect();
+    if (badgeRect && badgeRect.height > 0) {
+      const diff = Math.round(btnRect.top - badgeRect.top);
+      if (Math.abs(diff) >= 1 && Math.abs(diff) < 40) {
+        if (wrapper) {
+          wrapper.style.setProperty("margin-top", `${diff}px`, "important");
+        } else {
+          badge.style.setProperty("margin-top", `${diff}px`, "important");
+        }
+      }
+    }
+  }
+
   function removeExistingBadges() {
-    document.querySelectorAll(".bs-meter-profile-badge").forEach((el) => el.remove());
+    document.querySelectorAll(".bs-meter-badge-wrapper, .bs-meter-profile-badge").forEach((el) => el.remove());
     hideOverlay(true);
     if (pollingInterval) {
       clearInterval(pollingInterval);
@@ -380,15 +549,35 @@
     return null;
   }
 
-  function renderProfileBadge(container, handle, data) {
-    if (!container || !document.contains(container)) return;
+  function renderProfileBadge(handle, data) {
+    if (!handle) return;
 
-    let badge = container.querySelector(`.bs-meter-profile-badge[data-handle="${handle}"]`);
+    const target = findProfileActionsTarget();
+    let parent = null;
+    let refNode = null;
+
+    if (target && target.container) {
+      parent = target.container;
+      refNode = target.referenceNode;
+    } else {
+      parent = findProfileHeaderElement();
+    }
+
+    if (!parent || !document.contains(parent)) return;
+
+    let wrapper = document.querySelector(`.bs-meter-badge-wrapper[data-handle="${handle}"]`);
+    let badge = document.querySelector(`.bs-meter-profile-badge[data-handle="${handle}"]`);
+
+    if (!wrapper) {
+      wrapper = document.createElement("div");
+      wrapper.className = "bs-meter-badge-wrapper";
+      wrapper.setAttribute("data-handle", handle);
+    }
+
     if (!badge) {
       badge = document.createElement("div");
       badge.className = "bs-meter-profile-badge";
       badge.setAttribute("data-handle", handle);
-      container.appendChild(badge);
 
       badge.addEventListener("mouseenter", () => {
         showOverlay(badge, handle, badge._bsMeterData);
@@ -412,7 +601,29 @@
         }
       });
 
-      console.info(`[BS Meter] Attached badge to profile header for @${handle}`);
+      console.info(`[BS Meter] Attached badge next to profile action buttons for @${handle}`);
+    }
+
+    // Ensure badge is mounted inside its flex box wrapper
+    if (badge.parentElement !== wrapper) {
+      wrapper.appendChild(badge);
+    }
+    wrapper.className = "bs-meter-badge-wrapper";
+
+    // Attach or re-position wrapper in the actions row next to the other flex boxes
+    if (wrapper.parentElement !== parent || (refNode && wrapper.nextElementSibling !== refNode)) {
+      if (refNode && refNode !== wrapper && parent.contains(refNode)) {
+        parent.insertBefore(wrapper, refNode);
+      } else if (!parent.contains(wrapper)) {
+        parent.appendChild(wrapper);
+      }
+    }
+
+    if (target && target.container) {
+      syncBadgeVerticalAlignment(wrapper, badge, target);
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => syncBadgeVerticalAlignment(wrapper, badge, target));
+      }
     }
 
     badge._bsMeterData = data;
@@ -420,13 +631,13 @@
     const level = data && data.badge_level ? data.badge_level : "pending";
     const score = data && typeof data.bs_index === "number" ? Math.round(data.bs_index) : null;
 
-    let labelText = "⏳ Analyzing Profile via Context.dev...";
+    let labelText = "⏳ BS Index: Analyzing...";
     if (status === "ready" && score !== null) {
       if (level === "low") labelText = `✓ BS Index: ${score} (Low BS)`;
       else if (level === "medium") labelText = `⚠️ BS Index: ${score} (Caution)`;
       else labelText = `🚨 BS Index: ${score} (High BS)`;
     } else if (status === "analyzing") {
-      labelText = "⏳ Scraping & Verifying Claims...";
+      labelText = "⏳ BS Index: Verifying...";
     }
 
     badge.className = `bs-meter-profile-badge bs-badge-${level}`;
@@ -458,8 +669,7 @@
       const updated = await fetchProfileBSIndex(handle);
       if (updated && currentProfileHandle === handle) {
         currentProfileData = updated;
-        const header = findProfileHeaderElement();
-        if (header) renderProfileBadge(header, handle, updated);
+        renderProfileBadge(handle, updated);
 
         if (updated.status === "ready") {
           console.info(`[BS Meter] Analysis COMPLETE for @${handle}! BS Index: ${updated.bs_index}`);
@@ -494,18 +704,14 @@
       removeExistingBadges();
 
       // Mount pending badge immediately
-      const initialContainer = findProfileHeaderElement();
-      if (initialContainer) {
-        renderProfileBadge(initialContainer, handle, currentProfileData);
-      }
+      renderProfileBadge(handle, currentProfileData);
 
       // Trigger fetch and begin polling
       fetchProfileBSIndex(handle).then((data) => {
         if (currentProfileHandle === handle) {
           if (data) {
             currentProfileData = data;
-            const container = findProfileHeaderElement();
-            if (container) renderProfileBadge(container, handle, data);
+            renderProfileBadge(handle, data);
 
             if (data.status === "ready") {
               console.info(`[BS Meter] Instant cached evaluation ready for @${handle}`);
@@ -518,10 +724,14 @@
       });
     }
 
-    // Reattach badge if header re-rendered by React / Virtual DOM
-    const headerContainer = findProfileHeaderElement();
-    if (headerContainer && !headerContainer.querySelector(`.bs-meter-profile-badge[data-handle="${handle}"]`)) {
-      renderProfileBadge(headerContainer, handle, currentProfileData || { status: "queued", badge_level: "pending" });
+    // Reattach or reposition badge if React re-rendered or action buttons loaded
+    const badge = document.querySelector(`.bs-meter-profile-badge[data-handle="${handle}"]`);
+    const wrapper = document.querySelector(`.bs-meter-badge-wrapper[data-handle="${handle}"]`);
+    const target = findProfileActionsTarget();
+    if (!badge || !wrapper || (target && wrapper.parentElement !== target.container)) {
+      renderProfileBadge(handle, currentProfileData || { status: "queued", badge_level: "pending" });
+    } else if (badge && target) {
+      syncBadgeVerticalAlignment(wrapper, badge, target);
     }
   }
 
@@ -548,8 +758,13 @@
   window.addEventListener("resize", () => {
     const overlay = document.getElementById("bs-meter-global-overlay");
     const badge = document.querySelector(".bs-meter-profile-badge");
+    const wrapper = document.querySelector(".bs-meter-badge-wrapper");
     if (overlay && overlay.classList.contains("visible") && badge) {
       positionOverlay(overlay, badge);
+    }
+    if (badge) {
+      const target = findProfileActionsTarget();
+      if (target) syncBadgeVerticalAlignment(wrapper, badge, target);
     }
   });
 
@@ -571,9 +786,13 @@
   // Monitor DOM mutations (React view updates)
   const observer = new MutationObserver(() => {
     if (currentProfileHandle) {
-      const headerContainer = findProfileHeaderElement();
-      if (headerContainer && !headerContainer.querySelector(`.bs-meter-profile-badge[data-handle="${currentProfileHandle}"]`)) {
-        renderProfileBadge(headerContainer, currentProfileHandle, currentProfileData || { status: "queued", badge_level: "pending" });
+      const badge = document.querySelector(`.bs-meter-profile-badge[data-handle="${currentProfileHandle}"]`);
+      const wrapper = document.querySelector(`.bs-meter-badge-wrapper[data-handle="${currentProfileHandle}"]`);
+      const target = findProfileActionsTarget();
+      if (!badge || !wrapper || (target && wrapper.parentElement !== target.container)) {
+        renderProfileBadge(currentProfileHandle, currentProfileData || { status: "queued", badge_level: "pending" });
+      } else if (badge && target) {
+        syncBadgeVerticalAlignment(wrapper, badge, target);
       }
     }
   });
