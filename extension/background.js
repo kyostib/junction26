@@ -59,4 +59,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     return true; // Keep channel open for asynchronous sendResponse
   }
+
+  if (request && request.type === "GET_ANALYSIS") {
+    (async () => {
+      try {
+        const local = await chrome.storage.local.get(["apiBaseUrl"]);
+        let apiUrl = (local && local.apiBaseUrl ? local.apiBaseUrl : request.apiUrl || "").trim().replace(/\/+$/, "");
+        if (!apiUrl && chrome.storage.sync) {
+          const sync = await chrome.storage.sync.get(["apiBaseUrl"]).catch(() => ({}));
+          if (sync && sync.apiBaseUrl) apiUrl = sync.apiBaseUrl.trim().replace(/\/+$/, "");
+        }
+        if (!apiUrl) {
+          sendResponse({ success: false, error: "No API URL configured" });
+          return;
+        }
+        const endpoint = (request.reportUrl || "").startsWith("http") ? request.reportUrl : `${apiUrl}${request.reportUrl}`;
+        const response = await fetch(endpoint);
+        if (!response.ok) {
+          sendResponse({ success: false, status: response.status });
+          return;
+        }
+        const data = await response.json();
+        sendResponse({ success: true, data: data });
+      } catch (err) {
+        console.error(`[BS Meter Background] Analysis fetch failed: ${err.message}`);
+        sendResponse({ success: false, error: err.message || String(err) });
+      }
+    })();
+
+    return true;
+  }
 });
