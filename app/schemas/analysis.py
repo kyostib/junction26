@@ -40,6 +40,8 @@ class UserOverlayResponse(BaseModel):
     top_flags: list[FlagItem] = []
     analyzed_at: datetime | None = None
     report_url: str | None = None
+    summary: str | None = None
+    details: dict | None = None
 
 
 class OverlayBatchRequest(BaseModel):

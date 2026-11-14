@@ -93,6 +93,21 @@ async def batch_twitter_overlay(
                     top_flags=flags,
                     analyzed_at=completed_at,
                     report_url=f"/api/v1/analyses/{analysis.id}",
+                    summary=res_data.get("summary", ""),
+                    details={
+                        "summary": res_data.get("summary", ""),
+                        "bio": res_data.get("bio", ""),
+                        "bio_links": res_data.get("bio_links", []),
+                        "posts_analyzed": res_data.get("posts_analyzed", 0),
+                        "max_tweets_configured": res_data.get("max_tweets_configured", 10),
+                        "images_analyzed": res_data.get("images_analyzed", 0),
+                        "image_findings": res_data.get("image_findings", []),
+                        "claims_verified": res_data.get("claims_verified", 0),
+                        "claims": res_data.get("claims", []),
+                        "scraped_links_count": res_data.get("scraped_links_count", 0),
+                        "source_mode": res_data.get("source_mode", "Context.dev Search & Scrape Gateway"),
+                        "score_note": res_data.get("score_note", ""),
+                    },
                 )
                 continue
 
