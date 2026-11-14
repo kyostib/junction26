@@ -178,6 +178,12 @@
     }
   }
 
+  const MEDIA_EXTENSIONS = [
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".bmp", ".ico",
+    ".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".flv", ".wmv"
+  ];
+  const MEDIA_HOSTS = ["pbs.twimg.com", "video.twimg.com", "twimg.com", "ton.twitter.com"];
+
   function isExternalLink(value, username = "") {
     if (!value || typeof value !== "string") return false;
     const clean = value.trim();
@@ -185,11 +191,15 @@
       const url = new URL(clean.startsWith("http") ? clean : "https://" + clean);
       if (url.protocol !== "http:" && url.protocol !== "https:") return false;
       const domain = (url.hostname || "").toLowerCase().replace(/^www\./, "");
-      if (!domain || domain === "x.com" || domain === "twitter.com" || domain === "mobile.twitter.com") {
+      if (!domain || domain === "x.com" || domain === "twitter.com" || domain === "mobile.twitter.com" || MEDIA_HOSTS.includes(domain)) {
         return false;
       }
       const path = (url.pathname || "").toLowerCase();
       if (path.includes("share") || path.includes("intent")) {
+        return false;
+      }
+      const cleanPath = path.split("?")[0].split("#")[0];
+      if (MEDIA_EXTENSIONS.some(ext => cleanPath.endsWith(ext))) {
         return false;
       }
       const cleanUser = (username || "").toLowerCase().replace(/^@/, "");
@@ -236,6 +246,7 @@
       const falsehood = safePercent(dims.falsehood);
       const spam = safePercent(dims.spam);
       const harm = safePercent(dims.harm);
+      const propaganda = safePercent(dims.propaganda);
 
       let flagsHtml = "";
       if (data.top_flags && data.top_flags.length > 0) {
@@ -274,6 +285,9 @@
 
           <div class="bs-metric-row"><span>Harm & Toxicity:</span><span>${Math.round(harm)}%</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${harm}%; background:#f87171;"></div></div>
+
+          <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(propaganda)}%</span></div>
+          <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${propaganda}%; background:#a855f7;"></div></div>
         </div>
         ${flagsHtml}
         <div class="bs-inspect-row">
@@ -375,12 +389,9 @@
     const postsAnalyzed = details.posts_analyzed || (data && data.posts_analyzed) || 10;
     const postsList = details.posts || (data && data.posts) || [];
     const scrapedLinks = details.scraped_links || (data && data.scraped_links) || [];
-    const bioText = (details.bio && details.bio.trim()) ? details.bio : "No bio text provided on this profile.";
-    const bioLinks = details.bio_links || [];
     const topFlags = (data && data.top_flags) || [];
 
-    // Filter to strictly external links, discarding Twitter internal and profile/share links
-    const cleanBioLinks = bioLinks.filter((l) => isExternalLink(l, handle));
+    // Filter to strictly external links from posts (bio, images, and videos excluded)
     const cleanScrapedLinks = scrapedLinks.filter((l) => {
       const domain = (l.domain || "").toLowerCase().replace(/^www\./, "");
       if (domain === "x.com" || domain === "twitter.com" || domain === "mobile.twitter.com") return false;
@@ -389,7 +400,7 @@
       if (title.includes("share profile") || title.includes("share on x") || title.includes("on x / x")) return false;
       return true;
     });
-    const totalExternalLinks = cleanScrapedLinks.length || cleanBioLinks.length;
+    const totalExternalLinks = cleanScrapedLinks.length;
 
     let claims = details.claims || [];
     if ((!claims || claims.length === 0) && topFlags.length > 0) {
@@ -408,9 +419,13 @@
     const claimsVerified = details.claims_verified || claims.length;
     const propaganda = details.propaganda_profile || [];
     const propagandaAvailable = details.propaganda_analysis_status === "analyzed";
+    const propagandaScore = (typeof dims.propaganda === "number")
+      ? dims.propaganda
+      : Math.round(Math.max(0, ...(propaganda || []).map((p) => Number(p.score) || 0)) * 100);
+    const activeTechniquesCount = propaganda.filter((item) => (Number(item.score) || 0) > 0 || (Number(item.count) || 0) > 0).length;
     const evidenceBreakdown = details.claim_evidence_breakdown || {};
-    const scrapedLinksCount = details.scraped_links_count || (scrapedLinks.length || bioLinks.length);
-    const totalLinks = scrapedLinks.length || bioLinks.length || scrapedLinksCount;
+    const scrapedLinksCount = details.scraped_links_count || cleanScrapedLinks.length;
+    const totalLinks = cleanScrapedLinks.length;
     const rawReportUrl = resolveApiUrl(data && data.report_url);
 
     const levelColor = level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : level === "high" ? "#f87171" : "#9ca3af";
@@ -489,20 +504,6 @@
       claimsHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No disputed factual claims were asserted in the sampled posts.</div>`;
     }
 
-    // Bio Links HTML
-    let bioLinksHtml = "";
-    if (bioLinks.length > 0) {
-      bioLinksHtml = bioLinks.map((l) => `
-        <div class="bs-link-item-row">
-          <span class="bs-link-icon">🔗</span>
-          ${safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(l)}</a>` : escapeHtml(l)}
-          <span class="bs-link-source-badge">Profile Bio</span>
-        </div>
-      `).join("");
-    } else {
-      bioLinksHtml = `<div style="color:#94a3b8; font-style:italic; margin-top:4px;">No external links detected in profile bio.</div>`;
-    }
-
     // Flags HTML
     let flagsDetailHtml = "";
     if (topFlags.length > 0) {
@@ -536,18 +537,13 @@
 
           <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}%</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.harm)}%; background:#f87171;"></div></div>
+
+          <div class="bs-metric-row"><span>Propaganda & Rhetoric:</span><span>${Math.round(safePercent(propagandaScore))}%</span></div>
+          <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(propagandaScore)}%; background:#a855f7;"></div></div>
         </div>
         <div class="bs-inspect-card">
           <div style="font-weight:700; color:#e2e8f0; margin-bottom:6px; font-size:11px;">Active Flags:</div>
           ${flagsDetailHtml}
-        </div>
-      </div>
-
-      <!-- Propaganda / Rhetoric Profile -->
-      <div class="bs-inspect-section">
-        <div class="bs-section-title">🧭 Propaganda Technique Profile</div>
-        <div class="bs-inspect-card">
-          <div class="bs-profile-signals">${propagandaHtml}</div>
         </div>
       </div>
     `;
@@ -603,28 +599,7 @@
       `;
     }
 
-    // Section 3: Links Checked HTML (Strictly external links)
-    let bioSectionHtml = "";
-    if (cleanBioLinks.length > 0) {
-      bioSectionHtml = `
-        <div class="bs-inspect-card" style="margin-bottom:14px;">
-          <div class="bs-section-title" style="margin-bottom:8px;">👤 Profile Bio External Links</div>
-          <div class="bs-inspect-card-content">
-            <div style="margin-bottom:6px;"><b>Profile Bio:</b> ${escapeHtml(bioText)}</div>
-            <div style="margin-top:8px;">
-              ${cleanBioLinks.map(l => `
-                <div class="bs-link-item-row">
-                  <span class="bs-link-icon">🔗</span>
-                  ${safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(l)}</a>` : escapeHtml(l)}
-                  <span class="bs-link-source-badge">Profile Bio</span>
-                </div>
-              `).join("")}
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
+    // Section 3: Links Checked HTML (Strictly external links from sampled posts; bio and media excluded)
     let uncloakedSectionHtml = "";
     if (cleanScrapedLinks.length > 0) {
       uncloakedSectionHtml = `
@@ -633,7 +608,7 @@
           ${cleanScrapedLinks.map((l) => {
             const url = l.url || "";
             const domain = l.domain || (url ? (url.split("/")[2] || "") : "External");
-            const source = l.source === "bio" ? "Profile Bio" : (l.source ? `Post ${l.source}` : "Sampled Post");
+            const source = l.source ? (l.source.startsWith("tweet-") ? `Post ${l.source.replace("tweet-", "")}` : l.source) : "Sampled Post";
             const title = l.title || "External Destination Page";
             const preview = l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");
             const isError = Boolean(l.error);
@@ -656,13 +631,13 @@
           }).join("")}
         </div>
       `;
-    } else if (cleanBioLinks.length === 0) {
+    } else {
       uncloakedSectionHtml = `
         <div class="bs-inspect-section">
           <div class="bs-section-title">🔗 Links Checked</div>
           <div class="bs-inspect-card">
             <div class="bs-inspect-card-content" style="color:#10b981;">
-              ✓ No external links, shortened URLs, or commercial landing pages were detected in this profile's bio or sampled posts.
+              ✓ No external links, shortened URLs, or commercial landing pages were detected in the sampled posts.
             </div>
           </div>
         </div>
@@ -672,7 +647,6 @@
     const linksHtml = `
       <div class="bs-inspect-section">
         <div class="bs-section-title">🔗 External Links Checked (${totalExternalLinks})</div>
-        ${bioSectionHtml}
         ${uncloakedSectionHtml}
       </div>
     `;
@@ -707,6 +681,16 @@
       </div>
     `;
 
+    // Section 5: Propaganda Breakdown HTML
+    const propagandaSectionHtml = `
+      <div class="bs-inspect-section">
+        <div class="bs-section-title">🧭 Propaganda Technique Profile (${activeTechniquesCount} active of ${propaganda.length || 7})</div>
+        <div class="bs-inspect-card">
+          <div class="bs-profile-signals">${propagandaHtml}</div>
+        </div>
+      </div>
+    `;
+
     backdrop.innerHTML = `
       <div class="bs-inspect-modal" role="dialog" aria-modal="true">
         <!-- Header -->
@@ -732,9 +716,12 @@
           <button id="bsTabClaims" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
             ⚖️ Claims Verified <span class="bs-tab-count">${claims.length}</span>
           </button>
+          <button id="bsTabPropaganda" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
+            🧭 Propaganda <span class="bs-tab-count">${activeTechniquesCount}</span>
+          </button>
         </div>
 
-        <!-- Body with 4 Sections -->
+        <!-- Body with 5 Sections -->
         <div class="bs-modal-body">
           <div id="bsTabContentOverview" style="display:block;">
             ${overviewHtml}
@@ -748,6 +735,9 @@
           <div id="bsTabContentClaims" style="display:none;">
             ${claimsSectionHtml}
           </div>
+          <div id="bsTabContentPropaganda" style="display:none;">
+            ${propagandaSectionHtml}
+          </div>
         </div>
       </div>
     `;
@@ -758,6 +748,7 @@
       { btnId: "#bsTabPosts", contentId: "#bsTabContentPosts" },
       { btnId: "#bsTabLinks", contentId: "#bsTabContentLinks" },
       { btnId: "#bsTabClaims", contentId: "#bsTabContentClaims" },
+      { btnId: "#bsTabPropaganda", contentId: "#bsTabContentPropaganda" },
     ];
 
     function selectTab(targetIndex) {

@@ -17,14 +17,28 @@ class ProviderUnavailableError(RuntimeError):
     """Raised when live social data cannot be obtained safely."""
 
 
+MEDIA_EXTENSIONS = (
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".bmp", ".ico", ".tiff",
+    ".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".flv", ".wmv", ".ts", ".3gp", ".m3u8",
+    ".mp3", ".wav", ".ogg", ".aac",
+)
+MEDIA_HOSTS = ("pbs.twimg.com", "video.twimg.com", "twimg.com", "ton.twitter.com")
+
+
 def extract_urls(text: str) -> list[str]:
     raw = re.findall(r"https?://[^\s)\]\"'>]+", text)
     cleaned = []
     for u in raw:
         c = u.rstrip(".,;:!\"')>")
-        if c and not c.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg")) and "pbs.twimg.com/media/" not in c.lower():
-            if c not in cleaned:
-                cleaned.append(c)
+        if not c:
+            continue
+        c_lower = c.split("?")[0].split("#")[0].lower()
+        if any(c_lower.endswith(ext) for ext in MEDIA_EXTENSIONS):
+            continue
+        if any(host in c_lower for host in MEDIA_HOSTS):
+            continue
+        if c not in cleaned:
+            cleaned.append(c)
     return cleaned
 
 
@@ -54,7 +68,7 @@ def extract_image_urls(text: str) -> list[str]:
 
 
 def is_external_link(url: str, username: str = "") -> bool:
-    """Returns True if the URL is an external link, filtering out Twitter/X internal profile & share URLs."""
+    """Returns True if the URL is an external web link, filtering out Twitter/X internal URLs, images, and videos."""
     if not url or not isinstance(url, str):
         return False
     try:
@@ -62,8 +76,13 @@ def is_external_link(url: str, username: str = "") -> bool:
         domain = (parsed.hostname or "").lower().removeprefix("www.")
         if not domain or domain in {"x.com", "twitter.com", "mobile.twitter.com"}:
             return False
+        if any(domain == h or domain.endswith("." + h) for h in MEDIA_HOSTS):
+            return False
         path = (parsed.path or "").lower()
         if "share" in path or "intent" in path:
+            return False
+        clean_path = path.split("?")[0].split("#")[0]
+        if any(clean_path.endswith(ext) for ext in MEDIA_EXTENSIONS):
             return False
         clean_user = username.lower().lstrip("@")
         if clean_user and path.strip("/").split("/")[0].lower() == clean_user:
