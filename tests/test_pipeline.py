@@ -235,8 +235,58 @@ async def test_end_to_end_analysis_pipeline_with_bio():
     assert "bio" in result
     assert "bio_links" in result
     assert "max_tweets_configured" in result
+    assert "images_analyzed" in result
+    assert "image_findings" in result
     assert "dimensions" in result
     assert "top_flags" in result
     assert result["posts_analyzed"] <= result["max_tweets_configured"]
 
     await engine.dispose()
+
+
+def test_image_url_extraction_helpers():
+    from app.providers.context_dev import extract_image_urls, extract_urls
+
+    sample_text = (
+        "Look at this breaking story! ![Chart](https://pbs.twimg.com/media/graphic123.jpg) "
+        "Also read https://example.org/article and check out https://pbs.twimg.com/media/banner.png."
+    )
+    extracted_imgs = extract_image_urls(sample_text)
+    assert "https://pbs.twimg.com/media/graphic123.jpg" in extracted_imgs
+    assert "https://pbs.twimg.com/media/banner.png" in extracted_imgs
+
+    # Ensure extract_urls does not treat images as landing pages
+    web_links = extract_urls(sample_text)
+    assert "https://example.org/article" in web_links
+    assert "https://pbs.twimg.com/media/graphic123.jpg" not in web_links
+    assert "https://pbs.twimg.com/media/banner.png" not in web_links
+
+
+@pytest.mark.asyncio
+async def test_image_analysis_claim_and_scam_detection():
+    from app.providers.llm import DemoLLMProvider
+
+    llm = DemoLLMProvider()
+    images = [
+        {
+            "url": "https://pbs.twimg.com/media/great_wall_space_photo.jpg",
+            "post_id": "p-1",
+            "caption": "Photo from lunar orbit",
+        },
+        {
+            "url": "https://pbs.twimg.com/media/presale_token_100x_banner.png",
+            "post_id": "p-2",
+            "caption": "Free allocation presale token",
+        },
+    ]
+
+    analyses = await llm.analyze_images(images)
+    assert len(analyses) == 2
+
+    # Image 1 contains a visual claim
+    assert any("Great Wall" in c for c in analyses[0]["visual_claims"])
+    assert analyses[0]["is_misleading"] is True
+
+    # Image 2 is identified as a scam banner
+    assert analyses[1]["is_scam"] is True
+    assert any("pre-sale" in f.lower() or "airdrop" in f.lower() for f in analyses[1]["flags"])

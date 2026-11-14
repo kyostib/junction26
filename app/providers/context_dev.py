@@ -15,7 +15,38 @@ class ProviderUnavailableError(RuntimeError):
 
 def extract_urls(text: str) -> list[str]:
     raw = re.findall(r"https?://[^\s)\]\"'>]+", text)
-    return [u.rstrip(".,;:!\"')>") for u in raw if u.rstrip(".,;:!\"')>")]
+    cleaned = []
+    for u in raw:
+        c = u.rstrip(".,;:!\"')>")
+        if c and not c.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg")) and "pbs.twimg.com/media/" not in c.lower():
+            if c not in cleaned:
+                cleaned.append(c)
+    return cleaned
+
+
+def extract_image_urls(text: str) -> list[str]:
+    images: list[str] = []
+    # Markdown image syntax: ![alt](url)
+    for match in re.findall(r"!\[.*?\]\((https?://[^\s\)]+)\)", text):
+        clean = match.rstrip(".,;:!\"')>")
+        if clean not in images:
+            images.append(clean)
+
+    # HTML <img> tags
+    for match in re.findall(r"""<img[^>]+src=["'](https?://[^"']+)["']""", text, re.IGNORECASE):
+        clean = match.rstrip(".,;:!\"')>")
+        if clean not in images:
+            images.append(clean)
+
+    # Twitter media URLs or direct image extensions
+    for match in re.findall(r"https?://[^\s)\]\"'>]+", text):
+        clean = match.rstrip(".,;:!\"')>")
+        lower = clean.lower()
+        if "pbs.twimg.com/media/" in lower or lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+            if clean not in images:
+                images.append(clean)
+
+    return images
 
 
 def source_quality(domain: str) -> float:
@@ -170,6 +201,7 @@ class ContextDevProvider:
                         "id": f"tweet-{len(tweets)+1}",
                         "text": text,
                         "links": extract_urls(text),
+                        "images": extract_image_urls(text),
                     })
 
             logger.info("Context.dev web search retrieved %d public tweets for @%s", len(tweets), username)
@@ -318,10 +350,12 @@ class ContextDevProvider:
                     cleaned_text = re.sub(r"^[^@\n]+@[a-zA-Z0-9_]+\s*·\s*\w+\s*", "", text).strip()
                     if len(cleaned_text) > 15:
                         links = extract_urls(cleaned_text)
+                        images = extract_image_urls(text)
                         tweets.append({
                             "id": f"tweet-{len(tweets)+1}",
                             "text": cleaned_text,
                             "links": links,
+                            "images": images,
                         })
                     current_text = []
             if len(tweets) >= max_tweets:
@@ -346,26 +380,31 @@ class ContextDevProvider:
                 "id": f"{username}-1",
                 "text": "The EU adopted a law targeting new cars with CO2 emissions from 2035; it did not prohibit every existing petrol car.",
                 "links": [],
+                "images": [],
             },
             {
                 "id": f"{username}-2",
                 "text": "The Great Wall of China is visible from the Moon with the naked eye. Unbelievable ancient engineering!",
                 "links": [],
+                "images": ["https://demo.invalid/images/great_wall_space_photo.jpg"],
             },
             {
                 "id": f"{username}-3",
                 "text": "Check out this secret pre-sale token right now before it 100x! Claim free allocation here: https://airdrop-token-claims.invalid/presale",
                 "links": ["https://airdrop-token-claims.invalid/presale"],
+                "images": ["https://demo.invalid/images/presale_100x_allocation_banner.png"],
             },
             {
                 "id": f"{username}-4",
                 "text": "Global average temperatures have risen substantially since the late 19th century, according to NASA data.",
                 "links": ["https://climate.nasa.gov"],
+                "images": ["https://demo.invalid/images/nasa_temperature_trend.png"],
             },
             {
                 "id": f"{username}-5",
                 "text": "I love good coffee and quiet weekend mornings.",
                 "links": [],
+                "images": [],
             },
         ]
         return {
