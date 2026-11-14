@@ -5,6 +5,16 @@
 
   // Lucide SVG Icons Dictionary
   const LUCIDE_ICONS = {
+    "layout-dashboard":
+      '<rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect>',
+    sliders:
+      '<line x1="4" x2="4" y1="21" y2="14"></line><line x1="4" x2="4" y1="10" y2="3"></line><line x1="12" x2="12" y1="21" y2="12"></line><line x1="12" x2="12" y1="8" y2="3"></line><line x1="20" x2="20" y1="21" y2="16"></line><line x1="20" x2="20" y1="12" y2="3"></line><line x1="2" x2="6" y1="14" y2="14"></line><line x1="10" x2="14" y1="8" y2="8"></line><line x1="18" x2="22" y1="16" y2="16"></line>',
+    megaphone:
+      '<path d="m3 11 18-5v12L3 14v-3z"></path><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"></path>',
+    "pie-chart":
+      '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path>',
+    "file-text":
+      '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path>',
     "bar-chart-2":
       '<line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line>',
     "message-square":
@@ -417,7 +427,7 @@
     if (data.top_flags && data.top_flags.length > 0) {
       flagsHtml = `
         <div class="bs-flags-section">
-          <div class="bs-flag-header">Flagged Signals:</div>
+          <div class="bs-flag-header" style="display:flex; align-items:center; gap:5px;">${lucideIcon("flag", 12)} Flagged Signals:</div>
           ${data.top_flags
             .slice(0, 3)
             .map(
@@ -733,20 +743,20 @@
         )
         .join("");
     } else {
-      flagsDetailHtml = `<div style="color:var(--bs-status-supported-text); font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("check-circle-2", 13)} No major credibility flags or scam signals detected.</div>`;
+      flagsDetailHtml = `<div style="color:var(--bs-status-supported-text); font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("check-circle-2", 13)} No major BS detected.</div>`;
     }
 
     // Section 1: Overview HTML (without stat grid boxes)
     const overviewHtml = `
       <!-- Executive Summary -->
       <div class="bs-summary-box">
-        <div class="bs-summary-label">Summary</div>
+        <div class="bs-summary-label">${lucideIcon("file-text", 13)} Summary</div>
         <p class="bs-summary-text">${escapeHtml(summary)}</p>
       </div>
 
       <!-- Signal Dimensions & Flags -->
       <div class="bs-inspect-section">
-        <div class="bs-section-title">${lucideIcon("flag", 14)} Dimensions of BS</div>
+        <div class="bs-section-title">${lucideIcon("sliders", 14)} Dimensions of BS</div>
         <div class="bs-inspect-card" style="margin-bottom:10px;">
           <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}%</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.falsehood)}%; background:#38bdf8;"></div></div>
@@ -761,7 +771,7 @@
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(propagandaScore)}%; background:#a855f7;"></div></div>
         </div>
         <div class="bs-inspect-card">
-          <div style="font-weight:700; color:var(--bs-text-primary); margin-bottom:6px; font-size:11px;">Active Flags:</div>
+          <div style="font-weight:700; color:var(--bs-text-primary); margin-bottom:6px; font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("flag", 12)} Active Flags:</div>
           ${flagsDetailHtml}
         </div>
       </div>
@@ -826,7 +836,7 @@
     } else {
       postsHtml = `
         <div class="bs-inspect-section">
-          <div class="bs-section-title">${lucideIcon("message-square", 14)}Posts Analysed (${postsAnalyzed})</div>
+          <div class="bs-section-title">${lucideIcon("message-square", 14)} Posts Analysed (${postsAnalyzed})</div>
           <div class="bs-inspect-card">
             <div class="bs-inspect-card-content">
               <div style="font-weight:700; color:var(--bs-text-primary); margin-bottom:6px;">Sampled Posts Summary</div>
@@ -900,7 +910,7 @@
     // Section 4: Claims Verified HTML (Evidence Quality condensed into big colored numbers on top)
     const claimsSectionHtml = `
       <div class="bs-inspect-section" style="margin-bottom: 20px;">
-        <div class="bs-section-title">${lucideIcon("search", 14)} Breakdown (${Number(evidenceBreakdown.total) || claims.length} stances)</div>
+        <div class="bs-section-title">${lucideIcon("pie-chart", 14)} Breakdown (${Number(evidenceBreakdown.total) || claims.length} stances)</div>
         <div class="bs-stat-grid" style="margin-bottom: 0;">
           <div class="bs-breakdown-chip bs-breakdown-chip-supported">
             <div class="bs-breakdown-val">${countSupported}</div>
@@ -930,7 +940,7 @@
     // Section 5: Propaganda Breakdown HTML
     const propagandaSectionHtml = `
       <div class="bs-inspect-section">
-        <div class="bs-section-title">${lucideIcon("compass", 14)} Propaganda Indicators (${activeTechniquesCount} found in ${propaganda.length || 7})</div>
+        <div class="bs-section-title">${lucideIcon("megaphone", 14)} Propaganda Indicators (${activeTechniquesCount} found in ${propaganda.length || 7})</div>
         <div class="bs-inspect-card">
           <div class="bs-profile-signals">${propagandaHtml}</div>
         </div>
@@ -945,7 +955,7 @@
         <!-- Header -->
         <div class="bs-modal-header">
           <div class="bs-modal-title-group">
-            <h2 class="bs-modal-title">BS Deep Dive: @${escapeHtml(handle)}</h2>
+            <h2 class="bs-modal-title" style="display:flex; align-items:center; gap:8px;">${lucideIcon("search", 15)} BS Deep Dive: @${escapeHtml(handle)}</h2>
             
           </div>
           <div class="bs-modal-title-group">
@@ -958,9 +968,9 @@
 
         <!-- Navigation Tabs with Highlighted Counts -->
         <div class="bs-modal-tabs" role="tablist">
-          <button id="bsTabOverview" class="bs-tab-btn active" role="tab" aria-selected="true" type="button">${lucideIcon("bar-chart-2", 14)} Overview</button>
+          <button id="bsTabOverview" class="bs-tab-btn active" role="tab" aria-selected="true" type="button">${lucideIcon("layout-dashboard", 14)} Overview</button>
           <button id="bsTabPropaganda" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
-            ${lucideIcon("compass", 14)} Propaganda <span class="bs-tab-count">${activeTechniquesCount}</span>
+            ${lucideIcon("megaphone", 14)} Propaganda <span class="bs-tab-count">${activeTechniquesCount}</span>
           </button>
           <button id="bsTabStances" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
             ${lucideIcon("scale", 14)} Stances <span class="bs-tab-count">${claims.length}</span>
