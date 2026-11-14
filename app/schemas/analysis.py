@@ -1,9 +1,10 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, Field
 
 
 class AnalysisCreate(BaseModel):
-    platform: str = "twitter"
+    platform: Literal["twitter", "mock"] = "twitter"
     profile_url: str = Field(description="Twitter profile URL or handle (e.g. @username or https://x.com/username)")
 
 
@@ -32,12 +33,12 @@ class FlagItem(BaseModel):
 
 class UserOverlayResponse(BaseModel):
     username: str
-    status: str  # "ready", "analyzing", "queued", "unknown"
-    bs_index: float | None = None  # 0 to 100 scale (0 = trustworthy, 100 = extreme BS)
-    badge_level: str | None = None  # "low", "medium", "high"
+    status: str  # "ready", "analyzing", "queued", "insufficient_evidence", "unknown"
+    bs_index: float | None = None  # 0 to 100, or null when evidence is insufficient
+    badge_level: str | None = None  # "low", "medium", "high", "unknown"
     badge_label: str | None = None  # e.g. "[✓ 12]", "[⚠️ 48]", "[🚨 78]"
     dimensions: dict | None = None  # {"falsehood": 20, "spam": 80, "harm": 10}
-    top_flags: list[FlagItem] = []
+    top_flags: list[FlagItem] = Field(default_factory=list)
     analyzed_at: datetime | None = None
     report_url: str | None = None
 

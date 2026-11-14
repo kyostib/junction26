@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.social.mock import MockSocialAdapter
 from app.adapters.social.twitter import ContextDevTwitterAdapter
 from app.core.config import get_settings
+from app.core.errors import SocialDataUnavailableError
 from app.db.models import Analysis, Claim, Evidence, Post, Profile
 from app.pipeline.evaluate_evidence import evaluate_evidence
 from app.pipeline.extract_claims import extract_claims
@@ -14,6 +15,71 @@ from app.providers.context_dev import ContextDevProvider
 from app.providers.llm import get_llm_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _with_evaluated_stances(evidence, evaluation):
+    assessment_by_url = {assessment.url: assessment for assessment in evaluation.source_assessments}
+    return [
+        entry.model_copy(update={"stance": assessment_by_url[entry.url].stance})
+        if entry.url in assessment_by_url
+        else entry
+        for entry in evidence
+    ]
+
+
+def _best_evidence_for_assessment(evidence, assessment: str):
+    expected_stances = {
+        "contradicted": {"contradicts"},
+        "partially_supported": {"partially_supports", "contradicts"},
+    }.get(assessment, set())
+    candidates = [entry for entry in evidence if entry.stance.value in expected_stances]
+    return max(candidates, key=lambda entry: entry.relevance * entry.source_quality, default=None)
+
+
+def _evidence_for_spam_flag(scraped_links: list[dict], flag: str) -> dict | None:
+    lowered_flag = flag.lower()
+    return next(
+        (link for link in scraped_links if link.get("domain") and str(link["domain"]).lower() in lowered_flag),
+        None,
+    )
+
+
+async def _complete_with_insufficient_evidence(
+    analysis: Analysis,
+    profile: Profile,
+    session: AsyncSession,
+    reason: str,
+) -> dict:
+    scores = aggregate([])
+    completed_now = datetime.now(timezone.utc)
+    result = {
+        **scores,
+        "posts_analyzed": 0,
+        "factual_claims": 0,
+        "claims_analyzed": 0,
+        "claims_verified": 0,
+        "claims": [],
+        "top_flags": [],
+        "scraped_links_count": 0,
+        "source_mode": "unavailable",
+        "score_note": reason,
+    }
+    analysis.status = "completed"
+    analysis.overall_score = None
+    analysis.badge_level = scores["badge_level"]
+    analysis.badge_label = scores["badge_label"]
+    analysis.factuality_score = None
+    analysis.evidence_score = 0.0
+    analysis.spam_score = 0.0
+    analysis.harm_score = 0.0
+    analysis.sensationalism_score = 0.0
+    analysis.misleadingness_score = 0.0
+    analysis.claims_analyzed = 0
+    analysis.result = result
+    analysis.completed_at = completed_now
+    profile.last_analyzed_at = completed_now
+    await session.commit()
+    return result
 
 
 async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
@@ -30,6 +96,17 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
     try:
         settings = get_settings()
         context_provider = ContextDevProvider()
+        llm = get_llm_provider()
+
+        # The deterministic evaluator exists only for explicitly requested mock
+        # fixtures. A real account must not receive a truthfulness score from it.
+        if profile.platform != "mock" and settings.llm_provider.lower().strip() in {"mock", "demo"}:
+            return await _complete_with_insufficient_evidence(
+                analysis,
+                profile,
+                session,
+                "A model-backed evidence evaluator is not configured for live profiles.",
+            )
 
         # Select adapter: Twitter via Context.dev or Mock
         if profile.platform == "twitter":
@@ -37,8 +114,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         else:
             social = MockSocialAdapter()
 
-        profile_data = await social.fetch_profile(profile.profile_url)
-        posts = await social.fetch_posts(profile_data)
+        try:
+            profile_data = await social.fetch_profile(profile.profile_url)
+            posts = await social.fetch_posts(profile_data)
+        except SocialDataUnavailableError as exc:
+            return await _complete_with_insufficient_evidence(analysis, profile, session, str(exc))
 
         # Persist posts
         persisted_posts = []
@@ -69,7 +149,6 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             scraped_links.append(scraped)
 
         # 2. Extract verifiable factual claims
-        llm = get_llm_provider()
         claims = await extract_claims(posts, llm)
 
         # Persist claims using unique claim IDs
@@ -102,11 +181,12 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 logger.warning("Researching claim '%s' failed: %s", item.text, e)
                 evidence = []
             evaluation = await evaluate_evidence(item, evidence, llm)
+            assessed_evidence = _with_evaluated_stances(evidence, evaluation)
 
             row = claim_rows.get(item.id)
             if row:
                 row.verification_status = evaluation.verification_status
-                for entry in evidence:
+                for entry in assessed_evidence:
                     session.add(
                         Evidence(
                             claim_id=row.id,
@@ -126,12 +206,14 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 "assessment": evaluation.verification_status,
                 "reason": evaluation.reason,
                 "accuracy": evaluation.accuracy,
-                "evidence": [e.model_dump(mode="json") for e in evidence],
+                "evidence_confidence": evaluation.evidence_confidence,
+                "source_assessments": [assessment.model_dump(mode="json") for assessment in evaluation.source_assessments],
+                "evidence": [e.model_dump(mode="json") for e in assessed_evidence],
             }
             claim_results.append(claim_result_item)
 
             if evaluation.verification_status in ("contradicted", "partially_supported"):
-                top_evidence = evidence[0] if evidence else None
+                top_evidence = _best_evidence_for_assessment(assessed_evidence, evaluation.verification_status)
                 top_flags.append({
                     "type": "falsehood",
                     "summary": item.text[:120],
@@ -143,12 +225,13 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         # 4. Spam & Harm Analysis
         spam_harm_eval = await llm.evaluate_spam_and_harm(posts, scraped_links)
         for spam_flag in spam_harm_eval.get("spam_flags", []):
+            linked_evidence = _evidence_for_spam_flag(scraped_links, spam_flag)
             top_flags.append({
                 "type": "spam",
                 "summary": spam_flag,
                 "assessment": "high_spam_risk",
-                "evidence_url": scraped_links[0]["url"] if scraped_links else None,
-                "evidence_title": "Uncloaked Destination Page",
+                "evidence_url": linked_evidence.get("url") if linked_evidence else None,
+                "evidence_title": linked_evidence.get("title") if linked_evidence else None,
             })
 
         for harm_flag in spam_harm_eval.get("harm_flags", []):
@@ -177,8 +260,8 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "claims": claim_results,
             "top_flags": top_flags[:5],
             "scraped_links_count": len(scraped_links),
-            "source_mode": "Context.dev Search & Scrape Gateway",
-            "score_note": "A product heuristic based on public posts, Context.dev web grounding, and link uncloaking.",
+            "source_mode": "mock fixtures" if profile.platform == "mock" else "Context.dev Search & Scrape Gateway",
+            "score_note": "A product heuristic based on the attributable public posts and evidence shown. Insufficient evidence produces no BS Index.",
         }
 
         # Update Analysis record

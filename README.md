@@ -42,7 +42,7 @@ The fastest way to spin up the PostgreSQL database and FastAPI backend:
 1. **Set your environment variables**:
    ```bash
    cp .env.example .env
-   # Add your CONTEXT_DEV_API_KEY in .env
+   # Add CONTEXT_DEV_API_KEY plus a model-backed LLM configuration in .env
    ```
 
 2. **Start the containers**:
@@ -124,3 +124,7 @@ Context.dev serves as the **unified contact point**:
 1. **Twitter Scraping (`client.web.scrape`)**: Bypasses bot detection and renders the client-side JavaScript on `x.com/{username}` to extract recent tweets and profile metadata without needing an X API key.
 2. **Link Uncloaking & Inspection (`client.web.scrape`)**: Follows shortened `t.co` URLs and renders destination landing pages to inspect them for crypto presales, phishing, and affiliate spam.
 3. **Claim Grounding (`client.web.search`)**: Searches authoritative web sources to verify empirical claims.
+
+## Evidence safeguards
+
+Real Twitter analyses require both Context.dev and a configured model-backed evidence evaluator. If attributable posts cannot be collected, evidence is unavailable, or corroboration is too weak, the API returns `insufficient_evidence` without a BS Index. The `mock` provider and synthetic sources are restricted to explicit mock analyses.

@@ -20,6 +20,14 @@ class WebEvidence(BaseModel):
     stance: Stance = Stance.context_only
 
 
+class EvidenceSourceAssessment(BaseModel):
+    """A stance tied to one source returned by the research provider."""
+
+    url: str
+    stance: Stance
+    reason: str = ""
+
+
 class EvidenceEvaluation(BaseModel):
     accuracy: float = Field(ge=-1, le=1)
     evidence_quality: float = Field(ge=0, le=1)
@@ -27,3 +35,5 @@ class EvidenceEvaluation(BaseModel):
     sensationalism: float = Field(ge=0, le=1)
     verification_status: str
     reason: str
+    evidence_confidence: float = Field(default=0.0, ge=0, le=1)
+    source_assessments: list[EvidenceSourceAssessment] = Field(default_factory=list)

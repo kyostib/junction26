@@ -215,6 +215,16 @@
         ${flagsHtml}
         <div class="bs-powered-by">Verified via <b>Context.dev</b></div>
       `;
+    } else if (status === "insufficient_evidence") {
+      overlay.innerHTML = `
+        <div class="bs-popover-header">
+          <span class="bs-popover-title">@${handle} - Evidence Report</span>
+          <button class="bs-close-btn" id="bsOverlayClose">✕</button>
+        </div>
+        <div style="font-size:11px; color:#9ca3af; line-height:1.45;">
+          There is not enough attributable, corroborated evidence from the public posts analyzed to calculate a BS Index.
+        </div>
+      `;
     } else {
       overlay.innerHTML = `
         <div class="bs-popover-header">
@@ -400,6 +410,8 @@
       if (level === "low") labelText = `✓ BS Index: ${score} (Low BS)`;
       else if (level === "medium") labelText = `⚠️ BS Index: ${score} (Caution)`;
       else labelText = `🚨 BS Index: ${score} (High BS)`;
+    } else if (status === "insufficient_evidence") {
+      labelText = "? Insufficient evidence";
     } else if (status === "analyzing") {
       labelText = "⏳ Scraping & Verifying Claims...";
     }
@@ -436,7 +448,7 @@
         const header = findProfileHeaderElement();
         if (header) renderProfileBadge(header, handle, updated);
 
-        if (updated.status === "ready") {
+        if (updated.status === "ready" || updated.status === "insufficient_evidence") {
           console.info(`[BS Meter] Analysis COMPLETE for @${handle}! BS Index: ${updated.bs_index}`);
           clearInterval(pollingInterval);
         }
@@ -482,7 +494,7 @@
             const container = findProfileHeaderElement();
             if (container) renderProfileBadge(container, handle, data);
 
-            if (data.status === "ready") {
+            if (data.status === "ready" || data.status === "insufficient_evidence") {
               console.info(`[BS Meter] Instant cached evaluation ready for @${handle}`);
               return;
             }

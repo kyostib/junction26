@@ -37,7 +37,7 @@ class ContextDevTwitterAdapter(SocialProfileAdapter):
                 PostData(
                     platform_post_id=post_id,
                     text=text,
-                    post_url=f"https://x.com/{profile.username}/status/{post_id}",
+                    post_url=item.get("url"),
                     metadata={"links": links},
                 )
             )

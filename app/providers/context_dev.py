@@ -4,6 +4,7 @@ import re
 from urllib.parse import urlparse
 
 from app.core.config import get_settings
+from app.core.errors import SocialDataUnavailableError
 from app.schemas.evidence import Stance, WebEvidence
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,27 @@ def _extract_markdown(response) -> str:
     return ""
 
 
+def _tweet_identity(url: str, username: str) -> tuple[str, str] | None:
+    """Return a canonical post ID and URL only for a post owned by this profile."""
+    parsed = urlparse(url)
+    if parsed.netloc.lower().removeprefix("www.") not in {"x.com", "twitter.com"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 3 or parts[1].lower() != "status" or not parts[2].isdigit():
+        return None
+    if parts[0].lower() != username.lower():
+        return None
+    return parts[2], f"https://x.com/{parts[0]}/status/{parts[2]}"
+
+
+def _clean_post_text(value: str) -> str:
+    value = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", value)
+    value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", value)
+    value = re.sub(r"https?://[^\s)]+", "", value)
+    value = re.sub(r"\s+", " ", value).strip(" -|\"'")
+    return value
+
+
 class ContextDevProvider:
     """Context.dev unified gateway using the latest SDK:
     1. Twitter profile & tweet scraping (client.web.scrape with main_content_only)
@@ -60,8 +82,7 @@ class ContextDevProvider:
         url = f"https://x.com/{clean_user}"
 
         if not self.api_key:
-            logger.info("No CONTEXT_DEV_API_KEY; returning demo Twitter profile fixture for @%s", clean_user)
-            return self._demo_twitter_profile(clean_user)
+            raise SocialDataUnavailableError("CONTEXT_DEV_API_KEY is required to analyze a Twitter profile")
 
         def scrape_sync():
             from context.dev import ContextDev
@@ -78,10 +99,13 @@ class ContextDevProvider:
             markdown = _extract_markdown(response)
             tweets = self._parse_tweets_from_markdown(clean_user, markdown)
 
-            # If direct scrape was blocked by an X login wall, search for public tweets via Context.dev search
+            # If direct scrape did not produce attributable posts, search public post URLs.
             if not tweets:
-                logger.info("Direct scrape for @%s returned no tweets (login wall). Falling back to Context.dev search.", clean_user)
+                logger.info("Direct scrape for @%s returned no attributable posts. Falling back to Context.dev search.", clean_user)
                 tweets = await self._search_tweets_via_context_dev(clean_user)
+
+            if not tweets:
+                raise SocialDataUnavailableError(f"No attributable public posts were found for @{clean_user}")
 
             return {
                 "username": clean_user,
@@ -89,6 +113,8 @@ class ContextDevProvider:
                 "raw_markdown": markdown,
                 "tweets": tweets,
             }
+        except SocialDataUnavailableError:
+            raise
         except Exception as e:
             logger.warning("Context.dev scrape for @%s encountered error: %s. Trying search fallback.", clean_user, e)
             try:
@@ -102,7 +128,7 @@ class ContextDevProvider:
                     }
             except Exception as search_err:
                 logger.warning("Context.dev search fallback also failed: %s", search_err)
-            return self._demo_twitter_profile(clean_user)
+            raise SocialDataUnavailableError(f"Unable to collect attributable public posts for @{clean_user}") from e
 
     async def _search_tweets_via_context_dev(self, username: str) -> list[dict]:
         """Searches for public tweets from a user using Context.dev web search (bypasses login walls)."""
@@ -112,7 +138,7 @@ class ContextDevProvider:
             from context.dev import ContextDev
             client = ContextDev(api_key=self.api_key)
             return client.web.search(
-                query=f'site:x.com/{username} -inurl:status/ -inurl:search',
+                query=f"site:x.com/{username}/status",
                 num_results=10,
             )
 
@@ -127,9 +153,17 @@ class ContextDevProvider:
             tweets = []
             for item in (results or []):
                 item_dict = item if isinstance(item, dict) else (item.model_dump() if hasattr(item, "model_dump") else vars(item))
+                url = str(item_dict.get("url") or "")
+                identity = _tweet_identity(url, username)
+                if identity is None:
+                    continue
+                post_id, canonical_url = identity
+
                 desc = item_dict.get("description") or ""
                 title = item_dict.get("title") or ""
-                text = desc if len(desc) > 20 else title
+                raw_text = desc if len(desc) > 20 else title
+                links = [candidate for candidate in extract_urls(raw_text) if candidate != url]
+                text = _clean_post_text(raw_text)
 
                 lower = text.lower()
                 if any(x in lower for x in ("log in", "sign up", "onboarding", "redirect_after_login")):
@@ -140,9 +174,10 @@ class ContextDevProvider:
 
                 if len(text) > 15:
                     tweets.append({
-                        "id": f"tweet-{len(tweets)+1}",
+                        "id": post_id,
+                        "url": canonical_url,
                         "text": text,
-                        "links": extract_urls(text),
+                        "links": links,
                     })
                 if len(tweets) >= 10:
                     break
@@ -249,77 +284,39 @@ class ContextDevProvider:
             return []
 
     def _parse_tweets_from_markdown(self, username: str, markdown: str) -> list[dict]:
-        """Parses markdown extracted by Context.dev into individual tweet structures."""
-        lines = [line.strip() for line in markdown.split("\n") if line.strip()]
-        tweets = []
-        current_text = []
+        """Parse only blocks that contain an attributable public X post URL.
 
-        for line in lines:
-            lower_line = line.lower()
-            if (
-                line.startswith("#")
-                or "follow" in lower_line
-                or "joined" in lower_line
-                or "log in" in lower_line
-                or "sign up" in lower_line
-                or "onboarding" in lower_line
-                or "redirect_after_login" in lower_line
-                or "cookies" in lower_line
-                or "privacy policy" in lower_line
-                or "terms of service" in lower_line
-                or "don’t miss what’s happening" in lower_line
-            ):
+        Context.dev scrape output is presentation Markdown, not a tweet API response.
+        Rejecting blocks without a status URL is preferable to scoring navigation or
+        profile text as if it were a post.
+        """
+        tweets = []
+        seen_post_ids = set()
+        for block in re.split(r"\n\s*\n", markdown):
+            matches = [
+                _tweet_identity(url, username)
+                for url in extract_urls(block)
+            ]
+            identity = next((match for match in matches if match is not None), None)
+            if identity is None:
                 continue
-            if len(line) > 20:
-                current_text.append(line)
-                if len(current_text) >= 2 or len(line) > 100:
-                    text = " ".join(current_text)
-                    links = extract_urls(text)
-                    tweets.append({
-                        "id": f"tweet-{len(tweets)+1}",
-                        "text": text,
-                        "links": links,
-                    })
-                    current_text = []
+            post_id, canonical_url = identity
+            if post_id in seen_post_ids:
+                continue
+            text = _clean_post_text(block)
+            if len(text) < 15:
+                continue
+            tweets.append({
+                "id": post_id,
+                "url": canonical_url,
+                "text": text,
+                "links": [url for url in extract_urls(block) if _tweet_identity(url, username) is None],
+            })
+            seen_post_ids.add(post_id)
             if len(tweets) >= 15:
                 break
 
         return tweets
-
-    def _demo_twitter_profile(self, username: str) -> dict:
-        return {
-            "username": username,
-            "profile_url": f"https://x.com/{username}",
-            "raw_markdown": f"# @{username} Profile on X",
-            "tweets": [
-                {
-                    "id": f"{username}-1",
-                    "text": "The EU adopted a law targeting new cars with CO2 emissions from 2035; it did not prohibit every existing petrol car.",
-                    "links": [],
-                },
-                {
-                    "id": f"{username}-2",
-                    "text": "The Great Wall of China is visible from the Moon with the naked eye. Unbelievable ancient engineering!",
-                    "links": [],
-                },
-                {
-                    "id": f"{username}-3",
-                    "text": "Check out this secret pre-sale token right now before it 100x! Claim free allocation here: https://airdrop-token-claims.invalid/presale",
-                    "links": ["https://airdrop-token-claims.invalid/presale"],
-                },
-                {
-                    "id": f"{username}-4",
-                    "text": "Global average temperatures have risen substantially since the late 19th century, according to NASA data.",
-                    "links": ["https://climate.nasa.gov"],
-                },
-                {
-                    "id": f"{username}-5",
-                    "text": "I love good coffee and quiet weekend mornings.",
-                    "links": [],
-                },
-            ],
-        }
-
 
 class DemoWebResearchProvider:
     is_demo = True

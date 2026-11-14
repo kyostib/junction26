@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     context_dev_api_key: str | None = None
     llm_api_key: str | None = None
     llm_provider: str = "mock"
+    llm_model: str = "gemini-4-hydrogen"
     max_claims_to_verify: int = 5
     allowed_origins: list[str] = ["*"]
 

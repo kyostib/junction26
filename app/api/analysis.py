@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -12,6 +13,7 @@ from app.schemas.analysis import AnalysisCreate, AnalysisQueued, AnalysisRespons
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/analyses", tags=["analyses"])
+_analysis_submission_lock = asyncio.Lock()
 
 
 async def run_analysis(analysis_id: str):
@@ -29,24 +31,36 @@ async def create_analysis(payload: AnalysisCreate, tasks: BackgroundTasks, db: A
 
     if "://" in raw_url:
         path = urlparse(raw_url).path.rstrip("/")
-        username = path.rsplit("/", 1)[-1] or "sample-account"
+        username = path.strip("/").split("/", 1)[0] or "sample-account"
         profile_url = raw_url
     else:
         username = raw_url.lstrip("@").strip()
         profile_url = f"https://x.com/{username}" if platform == "twitter" else f"https://example.com/{username}"
+    username = username.lower()
 
-    # Deduplicate profile: lookup existing profile
-    stmt = select(Profile).where(Profile.platform == platform, Profile.username == username)
-    profile = (await db.execute(stmt)).scalar_one_or_none()
+    # The MVP deploys one API process. Serialize profile lookup and enqueue so
+    # repeated client requests cannot create simultaneous analyses for a handle.
+    async with _analysis_submission_lock:
+        stmt = select(Profile).where(Profile.platform == platform, Profile.username == username)
+        profile = (await db.execute(stmt)).scalar_one_or_none()
 
-    if not profile:
-        profile = Profile(platform=platform, username=username, profile_url=profile_url)
-        db.add(profile)
-        await db.flush()
+        if not profile:
+            profile = Profile(platform=platform, username=username, profile_url=profile_url)
+            db.add(profile)
+            await db.flush()
 
-    analysis = Analysis(profile_id=profile.id, status="queued")
-    db.add(analysis)
-    await db.commit()
+        active_stmt = (
+            select(Analysis)
+            .where(Analysis.profile_id == profile.id, Analysis.status.in_(["queued", "running"]))
+            .order_by(Analysis.created_at.desc())
+        )
+        active_analysis = (await db.execute(active_stmt)).scalars().first()
+        if active_analysis:
+            return AnalysisQueued(analysis_id=active_analysis.id, status=active_analysis.status)
+
+        analysis = Analysis(profile_id=profile.id, status="queued")
+        db.add(analysis)
+        await db.commit()
 
     tasks.add_task(run_analysis, analysis.id)
     return AnalysisQueued(analysis_id=analysis.id)

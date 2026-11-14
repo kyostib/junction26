@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -18,6 +19,7 @@ from app.schemas.analysis import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/overlay", tags=["overlay"])
+_overlay_mutation_lock = asyncio.Lock()
 
 
 def sanitize_handle(handle: str) -> str:
@@ -28,11 +30,11 @@ def sanitize_handle(handle: str) -> str:
     return h.lstrip("@").strip().lower()
 
 
-@router.post("/twitter/batch", response_model=OverlayBatchResponse)
-async def batch_twitter_overlay(
+async def _batch_twitter_overlay(
     payload: OverlayBatchRequest,
     tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    refresh: bool = False,
 ):
     """Batch lookup for Twitter handles, optimized for sub-50ms Chrome extension rendering."""
     clean_handles = list({sanitize_handle(h) for h in payload.usernames if h.strip()})
@@ -62,7 +64,13 @@ async def batch_twitter_overlay(
         if handle in profile_map:
             prof, analysis = profile_map[handle]
             # Check if there is a completed, fresh analysis
-            if analysis and analysis.status == "completed" and analysis.completed_at and analysis.completed_at > stale_threshold:
+            if (
+                analysis
+                and analysis.status == "completed"
+                and analysis.completed_at
+                and analysis.completed_at > stale_threshold
+                and not refresh
+            ):
                 res_data = analysis.result or {}
                 flags = [
                     FlagItem(
@@ -74,9 +82,10 @@ async def batch_twitter_overlay(
                     )
                     for f in res_data.get("top_flags", [])
                 ]
+                is_insufficient = res_data.get("score_status") == "insufficient_evidence"
                 results[handle] = UserOverlayResponse(
                     username=handle,
-                    status="ready",
+                    status="insufficient_evidence" if is_insufficient else "ready",
                     bs_index=analysis.overall_score,
                     badge_level=analysis.badge_level or "low",
                     badge_label=analysis.badge_label or f"[BS {round(analysis.overall_score or 0)}]",
@@ -87,11 +96,11 @@ async def batch_twitter_overlay(
                 )
                 continue
 
-            if analysis and analysis.status == "running":
+            if analysis and analysis.status in {"queued", "running"}:
                 results[handle] = UserOverlayResponse(
                     username=handle,
                     status="analyzing",
-                    badge_label="[⏳ Analyzing...]",
+                    badge_label="[⏳ Queued...]" if analysis.status == "queued" else "[⏳ Analyzing...]",
                 )
                 continue
 
@@ -130,6 +139,19 @@ async def batch_twitter_overlay(
     return OverlayBatchResponse(results=results)
 
 
+@router.post("/twitter/batch", response_model=OverlayBatchResponse)
+async def batch_twitter_overlay(
+    payload: OverlayBatchRequest,
+    tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    refresh: bool = False,
+):
+    # A single API process runs this MVP. Serializing lookup-and-enqueue avoids
+    # concurrent extension polls creating duplicate queued analyses.
+    async with _overlay_mutation_lock:
+        return await _batch_twitter_overlay(payload, tasks, db, refresh)
+
+
 @router.get("/twitter/{username}", response_model=UserOverlayResponse)
 async def get_single_twitter_overlay(
     username: str,
@@ -138,11 +160,13 @@ async def get_single_twitter_overlay(
     db: AsyncSession = Depends(get_db),
 ):
     handle = sanitize_handle(username)
-    batch_res = await batch_twitter_overlay(
-        payload=OverlayBatchRequest(usernames=[handle]),
-        tasks=tasks,
-        db=db,
-    )
+    async with _overlay_mutation_lock:
+        batch_res = await _batch_twitter_overlay(
+            payload=OverlayBatchRequest(usernames=[handle]),
+            tasks=tasks,
+            db=db,
+            refresh=refresh,
+        )
     return batch_res.results.get(
         handle,
         UserOverlayResponse(username=handle, status="unknown"),

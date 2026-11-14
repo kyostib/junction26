@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -5,11 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 from app.api.analysis import router as analysis_router
+from app.api.analysis import run_analysis
 from app.api.overlay import router as overlay_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.db.database import Base, engine
-from app.db import models  # noqa: F401
+from app.db.database import Base, SessionLocal, engine
+from app.db.models import Analysis
+from sqlalchemy import select
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -24,6 +27,15 @@ async def lifespan(app: FastAPI):
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # BackgroundTasks are process-local. Resume work left queued or running by a
+    # previous API process so a container restart cannot permanently strand it.
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(Analysis.id).where(Analysis.status.in_(["queued", "running"]))
+        )
+        unfinished_analysis_ids = list(result.scalars())
+    for analysis_id in unfinished_analysis_ids:
+        asyncio.create_task(run_analysis(analysis_id))
     yield
     await engine.dispose()
 
