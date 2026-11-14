@@ -346,6 +346,8 @@
   padding: 10px 22px !important;
   background: rgba(15, 23, 42, 0.8) !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  overflow-x: auto !important;
+  white-space: nowrap !important;
 }
 
 .bs-tab-btn {
@@ -605,11 +607,11 @@
 .bs-profile-signals, .bs-evidence-breakdown { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important; gap: 9px !important; }
 .bs-profile-signal, .bs-evidence-category { background: rgba(15, 23, 42, .72) !important; border: 1px solid rgba(255,255,255,.08) !important; border-radius: 9px !important; padding: 10px !important; }
 .bs-profile-signal-heading { display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 8px !important; color: #e2e8f0 !important; font-size: 11px !important; }
-.bs-profile-signal-heading span { color: #38bdf8 !important; white-space: nowrap !important; }
+.bs-profile-signal-heading span { color: #c084fc !important; white-space: nowrap !important; }
 .bs-profile-signal-track { height: 5px !important; margin: 7px 0 !important; background: rgba(148,163,184,.2) !important; border-radius: 99px !important; overflow: hidden !important; }
-.bs-profile-signal-track > div { height: 100% !important; background: #38bdf8 !important; border-radius: inherit !important; }
+.bs-profile-signal-track > div { height: 100% !important; background: #a855f7 !important; border-radius: inherit !important; }
 .bs-profile-signal-description { color: #94a3b8 !important; font-size: 10px !important; line-height: 1.4 !important; margin-top: 4px !important; }
-.bs-signal-example { color: #cbd5e1 !important; font-size: 10px !important; line-height: 1.4 !important; border-left: 2px solid rgba(56,189,248,.55) !important; padding-left: 7px !important; margin-top: 7px !important; overflow-wrap: anywhere !important; }
+.bs-signal-example { color: #cbd5e1 !important; font-size: 10px !important; line-height: 1.4 !important; border-left: 2px solid rgba(168,85,247,.55) !important; padding-left: 7px !important; margin-top: 7px !important; overflow-wrap: anywhere !important; }
 .bs-signal-example span { color: #64748b !important; }
 .bs-evidence-category { border-top: 2px solid #64748b !important; }
 .bs-evidence-category:nth-child(1) { border-top-color: #10b981 !important; }

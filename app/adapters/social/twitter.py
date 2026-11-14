@@ -2,7 +2,7 @@ import logging
 from urllib.parse import urlparse
 
 from app.adapters.social.base import PostData, ProfileData, SocialProfileAdapter
-from app.providers.context_dev import ContextDevProvider
+from app.providers.context_dev import ContextDevProvider, is_external_link
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +58,14 @@ class ContextDevTwitterAdapter(SocialProfileAdapter):
         for i, item in enumerate(raw_tweets, 1):
             post_id = item.get("id") or f"{username}-{i}"
             text = item.get("text", "")
-            links = item.get("links", [])
-            images = item.get("images", [])
+            links = [l for l in item.get("links", []) if is_external_link(l, username)]
             posts.append(
                 PostData(
                     platform_post_id=post_id,
                     text=text,
                     post_url=f"https://x.com/{username}/status/{post_id}",
-                    images=images,
-                    metadata={"links": links, "images": images},
+                    images=[],
+                    metadata={"links": links},
                 )
             )
         return posts

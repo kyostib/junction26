@@ -192,9 +192,43 @@ def test_is_external_link_filters_share_and_internal_urls():
     assert not is_external_link("https://twitter.com/aliceresearch", "aliceresearch")
     assert not is_external_link("https://x.com/share?url=https%3A%2F%2Fx.com")
     assert not is_external_link("https://twitter.com/intent/tweet?text=hello")
+    assert not is_external_link("https://pbs.twimg.com/media/graphic123.jpg")
+    assert not is_external_link("https://video.twimg.com/ext_tw_video/123/video.mp4")
+    assert not is_external_link("https://example.org/photo.png?size=large")
+    assert not is_external_link("https://example.org/animation.gif")
+    assert not is_external_link("https://example.org/clip.mp4")
+    assert not is_external_link("https://example.org/stream.webm")
     assert is_external_link("https://climate-policy.invalid/report", "aliceresearch")
     assert is_external_link("https://techpolicy.invalid/brief", "aliceresearch")
     assert is_external_link("https://t.co/abc123xyz", "aliceresearch")
+
+
+@pytest.mark.asyncio
+async def test_bio_and_media_strictly_excluded_from_consideration():
+    from app.adapters.social.base import PostData, ProfileData
+    from app.providers.llm import DemoLLMProvider
+
+    llm = DemoLLMProvider()
+    # Profile with scam / toxic bio, but clean posts and no links
+    profile = ProfileData(
+        platform="twitter",
+        username="cleantweets",
+        profile_url="https://x.com/cleantweets",
+        bio="Presale 100x gem! Airdrop free allocation! DM for promo! You idiot hate speech",
+        bio_links=["https://scam-airdrop.invalid/presale"],
+    )
+    posts = [
+        PostData(platform_post_id="1", text="Enjoying a great coffee this morning.", images=["https://example.org/pic.png"]),
+        PostData(platform_post_id="2", text="Reviewing research papers on renewable energy."),
+    ]
+    scraped_links = []
+    grounded_claims = []
+
+    synthesis = await llm.synthesize_analysis(profile, posts, scraped_links, grounded_claims)
+    # Bio must be excluded: spam and harm scores must be 0 and no bio flags generated
+    assert synthesis["dimensions"]["spam"] == 0.0
+    assert synthesis["dimensions"]["harm"] == 0.0
+    assert len(synthesis["top_flags"]) == 0
 
 
 @pytest.mark.asyncio
@@ -272,8 +306,8 @@ async def test_end_to_end_analysis_pipeline_with_bio():
         result = await analyze_profile(analysis_id, session)
 
     assert result["bs_index"] >= 0.0
-    assert "bio" in result
-    assert "bio_links" in result
+    assert result["bio"] == ""
+    assert result["bio_links"] == []
     assert "max_tweets_configured" in result
     assert "dimensions" in result
     assert "top_flags" in result

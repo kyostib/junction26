@@ -53,7 +53,14 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         all_post_links: dict[str, str] = {}
 
         for item in posts:
-            for link in item.metadata.get("links", []):
+            item.images = []
+            links = item.metadata.get("links", []) if isinstance(item.metadata, dict) else []
+            valid_links = [l for l in links if is_external_link(l, profile.username)]
+            if isinstance(item.metadata, dict):
+                item.metadata["links"] = valid_links
+                item.metadata.pop("images", None)
+
+            for link in valid_links:
                 if link not in all_post_links:
                     all_post_links[link] = f"tweet-{item.platform_post_id}"
 
@@ -75,14 +82,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         await session.flush()
         post_by_platform_id = {p.platform_post_id: p for p in persisted_posts}
 
-        # 1. Uncloak & inspect external links across user's bio and recent tweets
-        profile_data.bio_links = [l for l in profile_data.bio_links if is_external_link(l, profile.username)]
-        link_sources: dict[str, str] = {}
-        for link in profile_data.bio_links:
-            link_sources[link] = "bio"
-        for link, src in all_post_links.items():
-            if link not in link_sources and is_external_link(link, profile.username):
-                link_sources[link] = src
+        # 1. Uncloak & inspect external links strictly from recent sampled posts.
+        # Profile bio and images/videos are excluded from consideration.
+        profile_data.bio = ""
+        profile_data.bio_links = []
+        link_sources: dict[str, str] = dict(all_post_links)
 
         async def scrape_link_with_source(url: str, src: str) -> dict:
             try:
@@ -194,8 +198,8 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "dimensions": dims,
             "summary": synthesis.get("summary", ""),
             "top_flags": synthesis.get("top_flags", [])[:5],
-            "bio": profile_data.bio,
-            "bio_links": profile_data.bio_links,
+            "bio": "",
+            "bio_links": [],
             "posts_analyzed": len(posts),
             "max_tweets_configured": max_tweets,
             "factual_claims": sum(c.claim_type.value == "factual" for c in claims),

@@ -241,8 +241,6 @@ class GeminiLLMProvider:
         profile_summary = {
             "username": profile.username,
             "profile_url": profile.profile_url,
-            "bio": profile.bio,
-            "bio_links": profile.bio_links,
         }
         posts_summary = [
             {"id": p.platform_post_id, "text": p.text, "links": p.metadata.get("links", [])}
@@ -273,21 +271,22 @@ class GeminiLLMProvider:
         ]
         prompt = (
             "You are the BS Index synthesis engine. Your goal is to critically evaluate a social media account's credibility, honesty, and safety.\n"
-            "Analyze the user's profile bio, bio links, recent posts, uncloaked landing pages from external links, and verified factual claims with web evidence.\n\n"
+            "Analyze ONLY the user's recent posts, uncloaked landing pages from external links in those posts, and verified factual claims with web evidence.\n"
+            "Strictly exclude profile bio, images, and videos from consideration. Evaluate only the post texts and the uncloaked links within those posts.\n\n"
             f"User Profile:\n{json.dumps(profile_summary, indent=2)}\n\n"
             f"Recent Posts ({len(posts_summary)}):\n{json.dumps(posts_summary, indent=2)}\n\n"
-            f"Uncloaked External Links ({len(links_summary)}):\n{json.dumps(links_summary, indent=2)}\n\n"
+            f"Uncloaked External Links from Posts ({len(links_summary)}):\n{json.dumps(links_summary, indent=2)}\n\n"
             f"Verified Factual Claims & Evidence ({len(claims_summary)}):\n{json.dumps(claims_summary, indent=2)}\n\n"
             "Task:\n"
             "1. Score the assessment into these specific dimensions (0.0 to 100.0). The service calculates the overall BS Index from these dimensions:\n"
-            "   - falsehood: Extent to which factual assertions are contradicted by authoritative evidence or misleadingly framed (0 = truthful/accurate or no false claims, 100 = completely refuted/false). Note: unverified claims lacking clear evidence should NOT be penalized as false.\n"
-            "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing destinations, bio or posts (0 = clean, 100 = blatant scam).\n"
-            "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception (0 = safe, 100 = harmful).\n"
+            "   - falsehood: Extent to which factual assertions in the sampled posts are contradicted by authoritative evidence or misleadingly framed (0 = truthful/accurate or no false claims, 100 = completely refuted/false). Note: unverified claims lacking clear evidence should NOT be penalized as false.\n"
+            "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing destinations uncloaked from post links (0 = clean, 100 = blatant scam).\n"
+            "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception in posts (0 = safe, 100 = harmful).\n"
             "   - evidence_quality: Quality and reliability of sources available (0.0 to 10.0 scale).\n"
-            "   - misleadingness: Degree of cherry-picking, deception, or doctored visual elements (0.0 to 10.0 scale).\n"
-            "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype (0.0 to 10.0 scale).\n"
+            "   - misleadingness: Degree of cherry-picking, deception, or misleading framing in post texts (0.0 to 10.0 scale).\n"
+            "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype in post texts (0.0 to 10.0 scale).\n"
             "2. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
-            "3. Provide up to 5 top flags highlighting specific falsehoods, spam/scams (including suspicious bio links or uncloaked pages), or harm issues.\n\n"
+            "3. Provide up to 5 top flags highlighting specific falsehoods, spam/scams (from post links or uncloaked pages), or harm issues in posts.\n\n"
             "Return a JSON object with this exact schema:\n"
             "{\n"
             '  "dimensions": {\n'
@@ -506,21 +505,21 @@ class DemoLLMProvider:
         harm_score = 0.0
         top_flags: list[dict] = []
 
-        # 1. Inspect uncloaked landing pages (both from bio and tweets)
+        # 1. Inspect uncloaked landing pages strictly from post links (bio is excluded)
         for link in scraped_links:
             url = link.get("url", "")
             domain = link.get("domain", "")
             title = (link.get("title") or "").lower()
             text = (link.get("markdown") or "").lower()
             source = link.get("source", "post")
-            source_label = "in bio" if source == "bio" else "in tweet"
+            source_label = f"in post ({source})"
 
             combined_link_text = f"{url} {title} {text}".lower()
             if any(x in combined_link_text for x in ("airdrop", "presale", "token-claim", "free allocation", "crypto-drain")):
                 spam_score = max(spam_score, 88.0)
                 top_flags.append({
                     "type": "spam",
-                    "summary": f"Suspicious crypto airdrop/presale landing page uncloaked {source_label} ({domain or url})",
+                    "summary": f"Suspicious crypto airdrop/presale landing page uncloaked from post link ({domain or url})",
                     "assessment": "high_scam_risk",
                     "evidence_url": url,
                     "evidence_title": link.get("title") or "Uncloaked Scam Destination",
@@ -529,34 +528,14 @@ class DemoLLMProvider:
                 spam_score = max(spam_score, 55.0)
                 top_flags.append({
                     "type": "spam",
-                    "summary": f"Commercial/affiliate link {source_label} ({domain or url})",
+                    "summary": f"Commercial/affiliate link in post ({domain or url})",
                     "assessment": "commercial_spam",
                     "evidence_url": url,
                     "evidence_title": link.get("title") or "Affiliate Landing Page",
                 })
 
-        # 2. Inspect profile bio directly
-        bio_lower = profile.bio.lower()
-        if any(x in bio_lower for x in ("presale", "airdrop", "free allocation", "100x", "claim free", "dm for promo")):
-            spam_score = max(spam_score, 80.0)
-            top_flags.append({
-                "type": "spam",
-                "summary": "Profile bio promotes speculative token presale or engagement bait",
-                "assessment": "profile_bait",
-                "evidence_url": None,
-                "evidence_title": None,
-            })
-        if TOXIC_PATTERN.search(bio_lower):
-            harm_score = max(harm_score, 80.0)
-            top_flags.append({
-                "type": "harm",
-                "summary": "Hostile or abusive language detected in profile bio",
-                "assessment": "policy_violation",
-                "evidence_url": None,
-                "evidence_title": None,
-            })
-
-        # 3. Inspect recent posts
+        # Bio, images, and videos are excluded from consideration.
+        # 2. Inspect recent posts
         total_posts = len(posts) or 1
         spam_keyword_count = 0
         for p in posts:
@@ -565,7 +544,7 @@ class DemoLLMProvider:
                 spam_keyword_count += 1
                 top_flags.append({
                     "type": "spam",
-                    "summary": f"Engagement/token bait: '{p.text[:60]}...'",
+                    "summary": f"Engagement/token bait in recent post: '{p.text[:60]}...'",
                     "assessment": "spam_bait",
                     "evidence_url": None,
                     "evidence_title": None,
