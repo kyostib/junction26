@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.db.models import Analysis, Claim, Evidence, Post, Profile
 from app.pipeline.evaluate_evidence import evaluate_evidence
 from app.pipeline.extract_claims import extract_claims
+from app.pipeline.profile_signals import analyze_propaganda, summarize_claim_evidence
 from app.pipeline.scoring import compute_badge, prioritize
 from app.providers.context_dev import ContextDevProvider
 from app.providers.llm import get_llm_provider
@@ -219,6 +220,8 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "claims_analyzed": len(claims),
             "claims_verified": len(selected),
             "claims": claim_results,
+            "propaganda_profile": analyze_propaganda(posts),
+            "claim_evidence_breakdown": summarize_claim_evidence(claim_results, len(claims)),
             "scraped_links_count": len(scraped_links),
             "source_mode": "Context.dev Search & Scrape Gateway",
             "score_note": "A product heuristic based on public posts, Context.dev web grounding, and link uncloaking.",
