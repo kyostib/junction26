@@ -45,16 +45,17 @@ def _extract_markdown(response) -> str:
 
 class ContextDevProvider:
     """Context.dev unified gateway using the latest SDK:
-    1. Twitter profile & tweet scraping (client.web.scrape with mainContentOnly)
-    2. Embedded link uncloaking & inspection (client.web.scrape with markdown format)
-    3. Live web search for fact-checking (client.web.search with markdown_options)
+    1. Twitter profile & tweet scraping (client.web.scrape with main_content_only)
+    2. Fallback tweet search via Context.dev search (bypasses X login walls)
+    3. Embedded link uncloaking & inspection (client.web.scrape)
+    4. Live web search for fact-checking (client.web.search)
     """
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or get_settings().context_dev_api_key
 
     async def scrape_twitter_profile(self, username: str) -> dict:
-        """Scrapes a Twitter/X user profile using the latest Context.dev web scrape API."""
+        """Scrapes a Twitter/X user profile using Context.dev with headless JS rendering."""
         clean_user = username.lstrip("@").strip()
         url = f"https://x.com/{clean_user}"
 
@@ -68,15 +69,20 @@ class ContextDevProvider:
             return client.web.scrape(
                 url=url,
                 formats={"markdown": True},
-                shared_params={"mainContentOnly": True},
+                shared_params={"main_content_only": True},
             )
 
         try:
-            logger.info("Scraping Twitter profile @%s via Context.dev", clean_user)
+            logger.info("Executing Context.dev web.scrape for Twitter profile @%s", clean_user)
             response = await asyncio.wait_for(asyncio.to_thread(scrape_sync), timeout=60)
             markdown = _extract_markdown(response)
-
             tweets = self._parse_tweets_from_markdown(clean_user, markdown)
+
+            # If direct scrape was blocked by an X login wall, search for public tweets via Context.dev search
+            if not tweets:
+                logger.info("Direct scrape for @%s returned no tweets (login wall). Falling back to Context.dev search.", clean_user)
+                tweets = await self._search_tweets_via_context_dev(clean_user)
+
             return {
                 "username": clean_user,
                 "profile_url": url,
@@ -84,11 +90,71 @@ class ContextDevProvider:
                 "tweets": tweets,
             }
         except Exception as e:
-            logger.warning("Context.dev scrape for @%s failed (%s). Falling back to demo fixture.", clean_user, e)
+            logger.warning("Context.dev scrape for @%s encountered error: %s. Trying search fallback.", clean_user, e)
+            try:
+                tweets = await self._search_tweets_via_context_dev(clean_user)
+                if tweets:
+                    return {
+                        "username": clean_user,
+                        "profile_url": url,
+                        "raw_markdown": "",
+                        "tweets": tweets,
+                    }
+            except Exception as search_err:
+                logger.warning("Context.dev search fallback also failed: %s", search_err)
             return self._demo_twitter_profile(clean_user)
 
+    async def _search_tweets_via_context_dev(self, username: str) -> list[dict]:
+        """Searches for public tweets from a user using Context.dev web search (bypasses login walls)."""
+        logger.info("Executing Context.dev web.search for tweets from @%s", username)
+
+        def search_sync():
+            from context.dev import ContextDev
+            client = ContextDev(api_key=self.api_key)
+            return client.web.search(
+                query=f'site:x.com/{username} -inurl:status/ -inurl:search',
+                num_results=10,
+            )
+
+        try:
+            response = await asyncio.wait_for(asyncio.to_thread(search_sync), timeout=30)
+            results = getattr(response, "results", None)
+            if results is None and isinstance(response, dict):
+                results = response.get("results", [])
+            elif results is None and hasattr(response, "model_dump"):
+                results = response.model_dump().get("results", [])
+
+            tweets = []
+            for item in (results or []):
+                item_dict = item if isinstance(item, dict) else (item.model_dump() if hasattr(item, "model_dump") else vars(item))
+                desc = item_dict.get("description") or ""
+                title = item_dict.get("title") or ""
+                text = desc if len(desc) > 20 else title
+
+                lower = text.lower()
+                if any(x in lower for x in ("log in", "sign up", "onboarding", "redirect_after_login")):
+                    continue
+
+                if " on X: " in text:
+                    text = text.split(" on X: ", 1)[-1].strip('"').strip("'")
+
+                if len(text) > 15:
+                    tweets.append({
+                        "id": f"tweet-{len(tweets)+1}",
+                        "text": text,
+                        "links": extract_urls(text),
+                    })
+                if len(tweets) >= 10:
+                    break
+
+            logger.info("Context.dev web search retrieved %d public tweets for @%s", len(tweets), username)
+            return tweets
+        except Exception as e:
+            logger.warning("Context.dev search fallback for @%s failed: %s", username, e)
+            return []
+
     async def scrape_link(self, url: str) -> dict:
-        """Uncloaks and scrapes an external link (e.g. t.co) using the latest Context.dev scrape API."""
+        """Uncloaks and scrapes an external link (e.g. t.co) using Context.dev."""
         if not self.api_key:
             return {"url": url, "domain": urlparse(url).hostname or "", "title": "Demo link", "markdown": "Synthetic page content", "is_scam": False}
 
@@ -98,10 +164,11 @@ class ContextDevProvider:
             return client.web.scrape(
                 url=url,
                 formats={"markdown": True},
-                shared_params={"mainContentOnly": True},
+                shared_params={"main_content_only": True},
             )
 
         try:
+            logger.info("Executing Context.dev web.scrape for link %s", url)
             response = await asyncio.wait_for(asyncio.to_thread(scrape_sync), timeout=30)
             markdown = _extract_markdown(response)
             title = getattr(response, "title", None) or (response.get("title") if isinstance(response, dict) else "")
@@ -116,20 +183,26 @@ class ContextDevProvider:
             return {"url": url, "domain": urlparse(url).hostname or "", "title": "", "markdown": "", "error": str(e)}
 
     async def research_claim(self, claim: str) -> list[WebEvidence]:
-        """Searches authoritative web sources using the latest Context.dev search API."""
+        """Searches authoritative web sources using Context.dev search API."""
         if not self.api_key:
             return DemoWebResearchProvider().research_claim_sync(claim)
+
+        # Clean query: strip markdown links and raw URLs
+        clean_query = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", claim)
+        clean_query = re.sub(r"https?://\S+", "", clean_query).strip()
+        if not clean_query or len(clean_query) < 5 or any(x in clean_query.lower() for x in ("log in", "sign up", "onboarding")):
+            return []
 
         def search_sync():
             from context.dev import ContextDev
             client = ContextDev(api_key=self.api_key)
             return client.web.search(
-                query=claim,
+                query=clean_query[:200],
                 num_results=5,
-                markdown_options=True,
             )
 
         try:
+            logger.info("Executing Context.dev web.search for claim: '%s'", clean_query[:80])
             response = await asyncio.wait_for(asyncio.to_thread(search_sync), timeout=45)
             results = getattr(response, "results", None)
             if results is None and hasattr(response, "model_dump"):
@@ -171,9 +244,9 @@ class ContextDevProvider:
                     )
                 )
             return evidence
-        except Exception:
-            logger.exception("Context.dev web search failed for claim: %s", claim)
-            raise
+        except Exception as e:
+            logger.warning("Context.dev web search for '%s' returned: %s. Continuing with empty evidence.", clean_query, e)
+            return []
 
     def _parse_tweets_from_markdown(self, username: str, markdown: str) -> list[dict]:
         """Parses markdown extracted by Context.dev into individual tweet structures."""
@@ -182,7 +255,20 @@ class ContextDevProvider:
         current_text = []
 
         for line in lines:
-            if line.startswith("#") or "Follow" in line or "joined" in line.lower():
+            lower_line = line.lower()
+            if (
+                line.startswith("#")
+                or "follow" in lower_line
+                or "joined" in lower_line
+                or "log in" in lower_line
+                or "sign up" in lower_line
+                or "onboarding" in lower_line
+                or "redirect_after_login" in lower_line
+                or "cookies" in lower_line
+                or "privacy policy" in lower_line
+                or "terms of service" in lower_line
+                or "don’t miss what’s happening" in lower_line
+            ):
                 continue
             if len(line) > 20:
                 current_text.append(line)
@@ -198,8 +284,6 @@ class ContextDevProvider:
             if len(tweets) >= 15:
                 break
 
-        if not tweets:
-            return self._demo_twitter_profile(username)["tweets"]
         return tweets
 
     def _demo_twitter_profile(self, username: str) -> dict:

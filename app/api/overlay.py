@@ -36,6 +36,7 @@ async def batch_twitter_overlay(
 ):
     """Batch lookup for Twitter handles, optimized for sub-50ms Chrome extension rendering."""
     clean_handles = list({sanitize_handle(h) for h in payload.usernames if h.strip()})
+    logger.info("Batch overlay requested for handles: %s", clean_handles)
     if not clean_handles:
         return OverlayBatchResponse(results={})
 

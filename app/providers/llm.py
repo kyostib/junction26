@@ -180,18 +180,24 @@ class DemoLLMProvider:
         for post in posts:
             text = post.text.strip()
             lower = text.lower()
-            if not text or any(x in lower for x in ("i love", "amazing 😂", "good morning")):
+            if (
+                not text
+                or len(text) < 15
+                or any(x in lower for x in ("i love", "amazing 😂", "good morning", "log in", "sign up", "onboarding", "redirect_after_login", "cookies", "privacy policy", "terms of service"))
+            ):
                 continue
 
             # Check for factual claims
-            if any(x in lower for x in ("eu adopted", "great wall", "temperatures have risen", "visible from the moon", "nasa", "co2 emissions", "law", "percent", "study")):
+            if any(x in lower for x in ("eu adopted", "great wall", "temperatures have risen", "visible from the moon", "nasa", "co2 emissions", "law", "percent", "study", "report", "claims", "evidence")):
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.factual, importance=0.85))
             elif any(x in lower for x in ("everyone knows", "destroy the country", "ridiculous")):
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.rhetorical, importance=0.35))
             elif any(x in lower for x in ("will ", "going to ")):
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.prediction, importance=0.5))
-            else:
+            elif any(char.isdigit() for char in text):
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.factual, importance=0.6))
+            else:
+                found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.opinion, importance=0.3))
         return found
 
     async def evaluate_evidence(self, claim: ClaimExtraction, evidence: list[WebEvidence]) -> EvidenceEvaluation:
