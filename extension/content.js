@@ -239,6 +239,11 @@
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${harm}%; background:#f87171;"></div></div>
         </div>
         ${flagsHtml}
+        <div class="bs-inspect-row">
+          <button id="bsInspectBtn" class="bs-inspect-btn" type="button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:5px;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>Inspect Analysis
+          </button>
+        </div>
         <div class="bs-powered-by">Verified via <b>Context.dev</b></div>
       `;
     } else {
@@ -252,8 +257,23 @@
         <div style="font-size:11px; color:#9ca3af; line-height:1.45;">
           Context.dev is scraping recent tweets, uncloaking shortened links, and verifying claims against authoritative web evidence. Results refresh automatically.
         </div>
+        <div class="bs-inspect-row">
+          <button id="bsInspectBtn" class="bs-inspect-btn" type="button">
+            <span>ℹ️ How BS Meter Works</span>
+          </button>
+        </div>
         <div class="bs-powered-by">Powered by <b>Context.dev</b></div>
       `;
+    }
+
+    const inspectBtn = overlay.querySelector("#bsInspectBtn");
+    if (inspectBtn) {
+      inspectBtn.onclick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        hideOverlay(true);
+        openInspectModal(handle, data);
+      };
     }
 
     const closeBtn = overlay.querySelector("#bsOverlayClose");
@@ -276,6 +296,264 @@
     if (overlay) {
       overlay.classList.remove("visible");
     }
+  }
+
+  let activeModalKeydownHandler = null;
+
+  function closeInspectModal() {
+    const backdrop = document.getElementById("bs-inspect-modal-backdrop");
+    if (backdrop) {
+      backdrop.classList.remove("visible");
+    }
+    if (activeModalKeydownHandler) {
+      document.removeEventListener("keydown", activeModalKeydownHandler);
+      activeModalKeydownHandler = null;
+    }
+    document.body.style.removeProperty("overflow");
+  }
+
+  function getOrCreateInspectModalBackdrop() {
+    let backdrop = document.getElementById("bs-inspect-modal-backdrop");
+    if (!backdrop) {
+      backdrop = document.createElement("div");
+      backdrop.id = "bs-inspect-modal-backdrop";
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) {
+          closeInspectModal();
+        }
+      });
+      document.body.appendChild(backdrop);
+    }
+    return backdrop;
+  }
+
+  function openInspectModal(handle, data) {
+    const backdrop = getOrCreateInspectModalBackdrop();
+    const details = (data && data.details) || {};
+    const dims = (data && data.dimensions) || {};
+    const level = (data && data.badge_level) || "pending";
+    const score = (data && typeof data.bs_index === "number") ? Math.round(data.bs_index) : "—";
+    const summary = (data && data.summary) || details.summary || "Profile analysis completed using Context.dev live web grounding and link inspection.";
+
+    const postsAnalyzed = details.posts_analyzed || (data && data.posts_analyzed) || 0;
+    const imagesAnalyzed = details.images_analyzed || (data && data.images_analyzed) || 0;
+    const claimsVerified = details.claims_verified || (details.claims ? details.claims.length : 0);
+    const scrapedLinksCount = details.scraped_links_count || (details.bio_links ? details.bio_links.length : 0);
+    const bioText = details.bio || "No profile bio detected.";
+    const bioLinks = details.bio_links || [];
+    const claims = details.claims || [];
+    const imageFindings = details.image_findings || [];
+    const topFlags = (data && data.top_flags) || [];
+    const reportUrl = data && data.report_url ? safeHttpUrl(data.report_url) : null;
+
+    const levelColor = level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : level === "high" ? "#f87171" : "#9ca3af";
+    const levelText = level === "low" ? "Low Risk / Clean" : level === "medium" ? "Moderate Risk" : level === "high" ? "High Risk" : "Pending";
+
+    // Claims HTML
+    let claimsHtml = "";
+    if (claims.length > 0) {
+      claimsHtml = claims.map((c) => {
+        const assessment = c.assessment || "uncertain";
+        const stanceClass = `bs-stance-${assessment.toLowerCase()}`;
+        const sources = c.evidence || [];
+        const sourcesHtml = sources.slice(0, 3).map((s) => `
+          <div class="bs-evidence-source-item">
+            • <b>${escapeHtml(s.source_domain || "Source")}:</b> 
+            ${safeHttpUrl(s.url) ? `<a href="${escapeHtml(safeHttpUrl(s.url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(s.title || s.url)}</a>` : ""}
+            ${s.excerpt ? `<div class="bs-source-quote">“${escapeHtml(s.excerpt.slice(0, 160))}…”</div>` : ""}
+          </div>
+        `).join("");
+
+        return `
+          <div class="bs-claim-card">
+            <div class="bs-claim-header">
+              <span class="bs-claim-text">“${escapeHtml(c.claim || "")}”</span>
+              <span class="bs-stance-pill ${stanceClass}">${escapeHtml(assessment.replace("_", " "))}</span>
+            </div>
+            ${c.reason ? `<div class="bs-claim-reason">${escapeHtml(c.reason)}</div>` : ""}
+            ${sources.length > 0 ? `<div class="bs-claim-evidence-sources">${sourcesHtml}</div>` : ""}
+          </div>
+        `;
+      }).join("");
+    } else {
+      claimsHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No testable factual claims were asserted in the sampled posts.</div>`;
+    }
+
+    // Images HTML
+    let imagesHtml = "";
+    if (imageFindings.length > 0) {
+      imagesHtml = imageFindings.map((img) => `
+        <div class="bs-inspect-card">
+          <div style="font-weight:700; color:#ffffff; font-size:12px; margin-bottom:4px;">
+            ${img.is_scam ? "🚨 Flagged Scam / Airdrop Graphic" : img.is_misleading ? "⚠️ Misleading Visual Media" : "🖼️ Image Media Inspected"}
+          </div>
+          <div class="bs-inspect-card-content">
+            ${img.description ? `<div><b>Visual Description:</b> ${escapeHtml(img.description)}</div>` : ""}
+            ${img.extracted_text ? `<div style="margin-top:2px;"><b>OCR Text Detected:</b> “${escapeHtml(img.extracted_text)}”</div>` : ""}
+            ${img.flags && img.flags.length > 0 ? `<div style="margin-top:4px; color:#f87171;"><b>Flags:</b> ${escapeHtml(img.flags.join(", "))}</div>` : ""}
+          </div>
+        </div>
+      `).join("");
+    } else {
+      imagesHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No media images were attached to the sampled posts.</div>`;
+    }
+
+    // Bio Links HTML
+    let bioLinksHtml = "";
+    if (bioLinks.length > 0) {
+      bioLinksHtml = bioLinks.map((l) => `
+        <div style="margin-top:4px;">
+          🔗 ${safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(l)}</a>` : escapeHtml(l)}
+        </div>
+      `).join("");
+    } else {
+      bioLinksHtml = `<div style="color:#94a3b8; font-style:italic; margin-top:4px;">No external links in bio.</div>`;
+    }
+
+    // Flags HTML
+    let flagsDetailHtml = "";
+    if (topFlags.length > 0) {
+      flagsDetailHtml = topFlags.map((f) => `
+        <div class="bs-flag-item">
+          • <b>${escapeHtml((f.type || "SIGNAL").toUpperCase())}:</b> ${escapeHtml(f.summary)}
+          ${safeHttpUrl(f.evidence_url) ? `<a href="${escapeHtml(safeHttpUrl(f.evidence_url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Evidence Source: ${escapeHtml(f.evidence_title || "Context.dev Source")}</a>` : ""}
+        </div>
+      `).join("");
+    } else {
+      flagsDetailHtml = `<div style="color:#10b981; font-size:11px;">✓ No major credibility flags or scam signals detected.</div>`;
+    }
+
+    backdrop.innerHTML = `
+      <div class="bs-inspect-modal" role="dialog" aria-modal="true">
+        <!-- Header -->
+        <div class="bs-modal-header">
+          <div class="bs-modal-title-group">
+            <h2 class="bs-modal-title">Inspection Dossier: @${escapeHtml(handle)}</h2>
+            <span class="bs-modal-score-badge" style="background:${levelColor}22; color:${levelColor}; border:1px solid ${levelColor}55;">
+              BS Index: ${score}/100 (${levelText})
+            </span>
+          </div>
+          <button id="bsModalClose" class="bs-modal-close-btn" type="button" aria-label="Close">✕</button>
+        </div>
+
+        <!-- Body -->
+        <div class="bs-modal-body">
+          
+
+          <!-- Quick Stats -->
+          <div class="bs-stat-grid">
+            <div class="bs-stat-chip">
+              <div class="bs-stat-val">${postsAnalyzed}</div>
+              <div class="bs-stat-lbl">Posts Checked</div>
+            </div>
+            <div class="bs-stat-chip">
+              <div class="bs-stat-val">${imagesAnalyzed}</div>
+              <div class="bs-stat-lbl">Images Scanned</div>
+            </div>
+            <div class="bs-stat-chip">
+              <div class="bs-stat-val">${scrapedLinksCount}</div>
+              <div class="bs-stat-lbl">Links Uncloaked</div>
+            </div>
+            <div class="bs-stat-chip">
+              <div class="bs-stat-val">${claimsVerified}</div>
+              <div class="bs-stat-lbl">Claims Fact-Checked</div>
+            </div>
+          </div>
+
+   
+            <!-- Profile Bio Section -->
+            <div class="bs-inspect-section">
+              <div class="bs-section-title">👤 Profile Bio & Destination Links</div>
+              <div class="bs-inspect-card">
+                <div class="bs-inspect-card-content">
+                  <div><b>Bio:</b> ${escapeHtml(bioText)}</div>
+                  <div style="margin-top:6px;"><b>Bio Links:</b></div>
+                  ${bioLinksHtml}
+                </div>
+              </div>
+            </div>
+
+            <!-- Attached Tweet Images -->
+            <div class="bs-inspect-section">
+              <div class="bs-section-title">🖼️ Attached Media & Visual Inspection (OCR)</div>
+              ${imagesHtml}
+            </div>
+
+            <!-- Grounded Claims -->
+            <div class="bs-inspect-section">
+              <div class="bs-section-title">⚖️ Verified Factual Claims & Web Grounding</div>
+              ${claimsHtml}
+            </div>
+
+            <!-- Signal Dimensions & Flags -->
+            <div class="bs-inspect-section">
+              <div class="bs-section-title">🚩 Risk Dimensions & Flagged Signals</div>
+              <div class="bs-inspect-card" style="margin-bottom:10px;">
+                <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}%</span></div>
+                <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.falsehood)}%; background:#38bdf8;"></div></div>
+
+                <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))}%</span></div>
+                <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.spam)}%; background:#f59e0b;"></div></div>
+
+                <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}%</span></div>
+                <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.harm)}%; background:#f87171;"></div></div>
+              </div>
+              <div class="bs-inspect-card">
+                <div style="font-weight:700; color:#e2e8f0; margin-bottom:6px; font-size:11px;">Active Flags:</div>
+                ${flagsDetailHtml}
+              </div>
+            </div>
+
+
+      </div>
+    `;
+
+    // Tab switcher events
+    const tabWhat = backdrop.querySelector("#bsTabWhat");
+    const tabHow = backdrop.querySelector("#bsTabHow");
+    const contentWhat = backdrop.querySelector("#bsTabContentWhat");
+    const contentHow = backdrop.querySelector("#bsTabContentHow");
+
+    if (tabWhat && tabHow && contentWhat && contentHow) {
+      tabWhat.onclick = () => {
+        tabWhat.classList.add("active");
+        tabHow.classList.remove("active");
+        contentWhat.style.display = "block";
+        contentHow.style.display = "none";
+      };
+
+      tabHow.onclick = () => {
+        tabHow.classList.add("active");
+        tabWhat.classList.remove("active");
+        contentWhat.style.display = "none";
+        contentHow.style.display = "block";
+      };
+    }
+
+    // Close button events
+    const closeBtn = backdrop.querySelector("#bsModalClose");
+    if (closeBtn) closeBtn.onclick = closeInspectModal;
+    const footerCloseBtn = backdrop.querySelector("#bsModalCloseFooter");
+    if (footerCloseBtn) footerCloseBtn.onclick = closeInspectModal;
+
+    // Prevent closing when clicking inside modal
+    const modalDialog = backdrop.querySelector(".bs-inspect-modal");
+    if (modalDialog) {
+      modalDialog.onclick = (e) => e.stopPropagation();
+    }
+
+    // Keydown handler (Escape to close)
+    activeModalKeydownHandler = (e) => {
+      if (e.key === "Escape") {
+        closeInspectModal();
+      }
+    };
+    document.addEventListener("keydown", activeModalKeydownHandler);
+
+    // Prevent body background scroll while modal is open
+    document.body.style.overflow = "hidden";
+
+    backdrop.classList.add("visible");
   }
 
   function getProfileHandleFromUrl() {

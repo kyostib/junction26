@@ -115,6 +115,28 @@ def test_overlay_batch_api_end_to_end():
         assert data["sample_user"]["status"] in ("ready", "queued", "analyzing", "failed")
 
 
+def test_overlay_schema_has_summary_and_details():
+    from app.schemas.analysis import UserOverlayResponse
+
+    resp = UserOverlayResponse(
+        username="alice",
+        status="ready",
+        bs_index=15.0,
+        badge_level="low",
+        badge_label="[✓ 15]",
+        summary="High credibility profile.",
+        details={
+            "posts_analyzed": 5,
+            "images_analyzed": 2,
+            "claims": [{"claim": "Sample claim", "assessment": "supported"}],
+        },
+    )
+    dumped = resp.model_dump()
+    assert dumped["summary"] == "High credibility profile."
+    assert dumped["details"]["posts_analyzed"] == 5
+    assert dumped["details"]["claims"][0]["assessment"] == "supported"
+
+
 def test_config_max_tweets_and_profile_data():
     from app.adapters.social.base import ProfileData
     from app.core.config import get_settings
