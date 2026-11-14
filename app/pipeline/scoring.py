@@ -2,7 +2,7 @@ from app.schemas.evidence import EvidenceEvaluation
 
 
 def prioritize(claims, limit: int):
-    return sorted((c for c in claims if c.claim_type.value == "factual"), key=lambda c: c.importance, reverse=True)[:limit]
+    return sorted((c for c in claims if getattr(c.claim_type, "value", c.claim_type) == "factual"), key=lambda c: c.importance, reverse=True)[:limit]
 
 
 def compute_badge(bs_index: float) -> tuple[str, str]:
@@ -47,11 +47,11 @@ def aggregate(
 ) -> dict:
     """Aggregates factuality evaluations, spam signals, and harm metrics into a unified BS Index (0-100)."""
     # A missing or failed evidence lookup is unknown, not evidence that the
-    # claim is half false.  Only grounded evaluations influence factuality.
+    # claim is half false. Only grounded evaluations influence factuality.
     grounded_evaluations = [
         (importance, evaluation)
         for importance, evaluation in evaluations
-        if evaluation.evidence_quality > 0 or evaluation.verification_status != "uncertain"
+        if evaluation.evidence_quality > 0 and evaluation.verification_status != "uncertain"
     ]
     if grounded_evaluations:
         total_weight = sum(max(0.05, importance) for importance, _ in grounded_evaluations)

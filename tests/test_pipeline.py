@@ -365,3 +365,73 @@ async def test_overlay_legacy_cache_invalidation_and_rich_details():
 
     await engine.dispose()
 
+
+def test_inconclusive_evidence_with_nonzero_quality_does_not_inflate_falsehood():
+    # When web search finds pages (quality > 0) but evidence is inconclusive (uncertain),
+    # it must NOT be treated as 50% false.
+    inconclusive = EvidenceEvaluation(
+        accuracy=0.0,
+        evidence_quality=0.85,
+        misleadingness=0.0,
+        sensationalism=0.0,
+        verification_status="uncertain",
+        reason="Evidence is inconclusive across sources.",
+    )
+    result = aggregate([(1.0, inconclusive)])
+    assert result["bs_index"] == 0.0
+    assert result["dimensions"]["falsehood"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_benign_colloquialisms_do_not_trigger_harm_score():
+    llm = DemoLLMProvider()
+    posts = [
+        PostData(platform_post_id="p1", text="I hate Mondays and bad coffee."),
+        PostData(platform_post_id="p2", text="I would die for this pizza, absolutely delicious!"),
+        PostData(platform_post_id="p3", text="That workout yesterday will kill your legs."),
+    ]
+    res = await llm.evaluate_spam_and_harm(posts, [])
+    assert res["harm_score"] == 0.0
+    assert len(res["harm_flags"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_severe_abusive_language_still_triggers_harm_score():
+    llm = DemoLLMProvider()
+    posts = [
+        PostData(platform_post_id="p1", text="You are all subhuman traitors and should die in a fire!"),
+    ]
+    res = await llm.evaluate_spam_and_harm(posts, [])
+    assert res["harm_score"] >= 80.0
+    assert len(res["harm_flags"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_create_analysis_deduplication_does_not_crash_integrity_error():
+    from fastapi import BackgroundTasks
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.api.analysis import create_analysis
+    from app.db.database import Base
+    from app.schemas.analysis import AnalysisCreate
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        tasks = BackgroundTasks()
+        payload = AnalysisCreate(profile_url="https://x.com/jack")
+        
+        # Call 1: Creates profile and queued analysis
+        res1 = await create_analysis(payload, tasks, session)
+        assert res1.status == "queued"
+        
+        # Call 2: Concurrent or duplicate call should return existing active analysis
+        res2 = await create_analysis(payload, tasks, session)
+        assert res2.status == "queued"
+        assert res2.analysis_id == res1.analysis_id
+
+    await engine.dispose()
+
+

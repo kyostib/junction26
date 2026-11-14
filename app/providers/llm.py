@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Protocol
 
 import httpx
@@ -279,7 +280,7 @@ class GeminiLLMProvider:
             f"Verified Factual Claims & Evidence ({len(claims_summary)}):\n{json.dumps(claims_summary, indent=2)}\n\n"
             "Task:\n"
             "1. Score the assessment into these specific dimensions (0.0 to 100.0). The service calculates the overall BS Index from these dimensions:\n"
-            "   - falsehood: Extent to which claims are contradicted or ungrounded (0 = truthful, 100 = completely false).\n"
+            "   - falsehood: Extent to which factual assertions are contradicted by authoritative evidence or misleadingly framed (0 = truthful/accurate or no false claims, 100 = completely refuted/false). Note: unverified claims lacking clear evidence should NOT be penalized as false.\n"
             "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing destinations, bio or posts (0 = clean, 100 = blatant scam).\n"
             "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception (0 = safe, 100 = harmful).\n"
             "   - evidence_quality: Quality and reliability of sources available (0.0 to 10.0 scale).\n"
@@ -344,6 +345,12 @@ class GeminiLLMProvider:
         return await self.fallback_demo.synthesize_analysis(profile, posts, scraped_links, grounded_claims)
 
 
+TOXIC_PATTERN = re.compile(
+    r"\b(kill\s+(?:yourself|them|all|everyone)|die\s+in\s+a\s+fire|hope\s+you\s+die|subhuman|vermin|traitors?|scam\s+them\s+all)\b",
+    re.IGNORECASE,
+)
+
+
 class DemoLLMProvider:
     """Intelligent heuristic and demo evaluator.
     Supports claim extraction, stance evaluation on live Context.dev search, and spam/harm link analysis.
@@ -368,7 +375,7 @@ class DemoLLMProvider:
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.rhetorical, importance=0.35))
             elif any(x in lower for x in ("will ", "going to ")):
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.prediction, importance=0.5))
-            elif any(char.isdigit() for char in text):
+            elif any(marker in lower for marker in ("%", "percent", "$", "€", "billion", "million", "trillion", "km", "miles", "celsius", "degrees", "tons", "per capita", "since 19", "since 20", "in 19", "in 20")) and any(c.isdigit() for c in text):
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.factual, importance=0.6))
             else:
                 found.append(ClaimExtraction(post_id=post.platform_post_id, text=text, claim_type=ClaimType.opinion, importance=0.3))
@@ -466,7 +473,7 @@ class DemoLLMProvider:
             if any(x in lower for x in ("presale", "airdrop", "100x", "claim free", "limited spots", "check out this secret")):
                 spam_keyword_count += 1
                 spam_flags.append(f"Engagement/token bait: '{p.text[:60]}...'")
-            if any(x in lower for x in ("hate", "die", "kill", "vermin", "traitor", "scam them all")):
+            if TOXIC_PATTERN.search(lower):
                 harm_score = max(harm_score, 80.0)
                 harm_flags.append("Hostile or abusive language detected in post")
 
@@ -539,7 +546,7 @@ class DemoLLMProvider:
                 "evidence_url": None,
                 "evidence_title": None,
             })
-        if any(x in bio_lower for x in ("hate", "die", "kill", "vermin", "traitor")):
+        if TOXIC_PATTERN.search(bio_lower):
             harm_score = max(harm_score, 80.0)
             top_flags.append({
                 "type": "harm",
@@ -563,7 +570,7 @@ class DemoLLMProvider:
                     "evidence_url": None,
                     "evidence_title": None,
                 })
-            if any(x in lower for x in ("hate", "die", "kill", "vermin", "traitor", "scam them all")):
+            if TOXIC_PATTERN.search(lower):
                 harm_score = max(harm_score, 80.0)
                 top_flags.append({
                     "type": "harm",
@@ -578,7 +585,7 @@ class DemoLLMProvider:
             spam_score = max(spam_score, keyword_spam)
 
         # 4. Inspect verified claims & evidence
-        grounded_claims_with_evidence = [c for c in grounded_claims if c.get("assessment") != "uncertain" or c.get("evidence")]
+        grounded_claims_with_evidence = [c for c in grounded_claims if c.get("assessment") != "uncertain" and c.get("evidence")]
         if grounded_claims_with_evidence:
             accuracies = [float(c.get("accuracy", 0.0)) for c in grounded_claims_with_evidence]
             avg_accuracy = sum(accuracies) / len(accuracies)
@@ -649,7 +656,8 @@ def get_llm_provider() -> LLMProvider:
     api_key = settings.llm_api_key
 
     if provider_name in ("gemini", "google", "google-ai-studio") and api_key:
-        logger.info("Initializing GeminiLLMProvider with model gemini-2.0-flash")
-        return GeminiLLMProvider(api_key=api_key)
+        provider = GeminiLLMProvider(api_key=api_key)
+        logger.info("Initializing GeminiLLMProvider with model %s", provider.model)
+        return provider
 
     return DemoLLMProvider()

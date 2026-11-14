@@ -63,9 +63,9 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
 
             post = Post(
                 profile_id=profile.id,
-                platform_post_id=item.platform_post_id,
+                platform_post_id=str(item.platform_post_id)[:200],
                 text=item.text,
-                post_url=item.post_url,
+                post_url=str(item.post_url)[:1000] if item.post_url else None,
                 published_at=item.published_at,
                 metadata_json=item.metadata,
             )
@@ -111,37 +111,44 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 id=item.id,
                 post_id=parent_post.id,
                 text=item.text,
-                claim_type=item.claim_type.value,
+                claim_type=str(getattr(item.claim_type, "value", item.claim_type))[:30],
                 importance=item.importance,
             )
             session.add(row)
             claim_rows[item.id] = row
         await session.flush()
 
-        # 3. Ground truth research via Context.dev Web Search
+        # 3. Ground truth research via Context.dev Web Search (parallelized)
         selected = prioritize(claims, settings.max_claims_to_verify)
-        claim_results = []
 
-        for item in selected:
+        async def research_claim_safe(claim_text: str):
             try:
-                evidence = await context_provider.research_claim(item.text)
+                return await context_provider.research_claim(claim_text)
             except Exception as e:
-                logger.warning("Researching claim '%s' failed: %s", item.text, e)
-                evidence = []
-            evaluation = await evaluate_evidence(item, evidence, llm)
+                logger.warning("Researching claim '%s' failed: %s", claim_text, e)
+                return []
 
+        all_evidence = await asyncio.gather(*(research_claim_safe(item.text) for item in selected)) if selected else []
+        all_evaluations = (
+            await asyncio.gather(*(evaluate_evidence(item, ev, llm) for item, ev in zip(selected, all_evidence)))
+            if selected
+            else []
+        )
+
+        claim_results = []
+        for item, evidence, evaluation in zip(selected, all_evidence, all_evaluations):
             row = claim_rows.get(item.id)
             if row:
-                row.verification_status = evaluation.verification_status
+                row.verification_status = str(evaluation.verification_status)[:40]
                 for entry in evidence:
                     session.add(
                         Evidence(
                             claim_id=row.id,
-                            url=entry.url,
-                            title=entry.title,
-                            source_domain=entry.source_domain,
+                            url=str(entry.url)[:2000],
+                            title=str(entry.title or "")[:1000],
+                            source_domain=str(entry.source_domain or "")[:300],
                             excerpt=entry.excerpt,
-                            stance=entry.stance.value,
+                            stance=str(getattr(entry.stance, "value", entry.stance))[:40],
                             source_quality=entry.source_quality,
                             relevance=entry.relevance,
                         )
