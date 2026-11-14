@@ -382,15 +382,15 @@
     const levelColor = level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : level === "high" ? "#f87171" : "#9ca3af";
     const levelText = level === "low" ? "Low Risk / Clean" : level === "medium" ? "Moderate Risk" : level === "high" ? "High Risk" : "Pending";
 
-    const maxTechniqueCount = Math.max(1, ...propaganda.map((item) => Number(item.count) || 0));
     const propagandaHtml = propaganda.length ? propaganda.map((item) => {
       const count = Math.max(0, Number(item.count) || 0);
+      const techniqueScore = Math.max(0, Math.min(1, Number(item.score) || 0));
       const examples = (item.examples || []).slice(0, 2).map((example) => `
         <div class="bs-signal-example">“${escapeHtml(example.matched_text || example.text || "")}”${example.post_id ? ` <span>· post ${escapeHtml(example.post_id)}</span>` : ""}${example.reason ? `<div class="bs-profile-signal-description">${escapeHtml(example.reason)}</div>` : ""}</div>
       `).join("");
       return `<div class="bs-profile-signal">
-        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${count} ${count === 1 ? "post" : "posts"}</span></div>
-        <div class="bs-profile-signal-track"><div style="width:${Math.min(100, count / maxTechniqueCount * 100)}%"></div></div>
+        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${techniqueScore.toFixed(2)} score · ${count} ${count === 1 ? "post" : "posts"}</span></div>
+        <div class="bs-profile-signal-track"><div style="width:${techniqueScore * 100}%"></div></div>
         <div class="bs-profile-signal-description">${escapeHtml(item.description || "")}</div>
         ${examples || (count === 0 ? `<div class="bs-profile-signal-description">No matching examples in this sample.</div>` : "")}
       </div>`;

@@ -15,8 +15,8 @@ def compute_badge(bs_index: float) -> tuple[str, str]:
     return "high", f"[🚨 {score}]"
 
 
-def compute_bs_index(falsehood: float, spam: float, harm: float) -> float:
-    """Return a severity-first 0–100 index from the three risk dimensions.
+def compute_bs_index(falsehood: float, spam: float, harm: float, propaganda: float = 0.0) -> float:
+    """Return a severity-first 0–100 index from the risk dimensions.
 
     A verified severe problem in any one dimension should be able to produce a
     correspondingly severe index. Other dimensions provide limited corroboration
@@ -26,14 +26,16 @@ def compute_bs_index(falsehood: float, spam: float, harm: float) -> float:
         "falsehood": max(0.0, min(100.0, falsehood)),
         "spam": max(0.0, min(100.0, spam)),
         "harm": max(0.0, min(100.0, harm)),
+        "propaganda": max(0.0, min(100.0, propaganda)),
     }
     dominant = max(dimensions.values())
     weighted_signal = (
         0.45 * dimensions["falsehood"]
         + 0.35 * dimensions["spam"]
         + 0.20 * dimensions["harm"]
+        + 0.20 * dimensions["propaganda"]
     )
-    corroboration = (weighted_signal / 100.0) * 0.25
+    corroboration = min(1.0, weighted_signal / 1.20 / 100.0) * 0.25
     return round(min(100.0, dominant + (100.0 - dominant) * corroboration), 1)
 
 
@@ -41,6 +43,7 @@ def aggregate(
     evaluations: list[tuple[float, EvidenceEvaluation]],
     spam_score: float = 0.0,
     harm_score: float = 0.0,
+    propaganda_score: float = 0.0,
 ) -> dict:
     """Aggregates factuality evaluations, spam signals, and harm metrics into a unified BS Index (0-100)."""
     # A missing or failed evidence lookup is unknown, not evidence that the
@@ -67,7 +70,8 @@ def aggregate(
     spam_score = round(max(0.0, min(100.0, spam_score)), 1)
     harm_score = round(max(0.0, min(100.0, harm_score)), 1)
 
-    bs_index = compute_bs_index(falsehood_score, spam_score, harm_score)
+    propaganda_score = round(max(0.0, min(100.0, propaganda_score)), 1)
+    bs_index = compute_bs_index(falsehood_score, spam_score, harm_score, propaganda_score)
     badge_level, badge_label = compute_badge(bs_index)
 
     return {
@@ -79,6 +83,7 @@ def aggregate(
             "falsehood": falsehood_score,
             "spam": spam_score,
             "harm": harm_score,
+            "propaganda": propaganda_score,
             "factuality_accuracy": round(avg_accuracy, 2),
             "evidence_quality": round(avg_quality * 10, 1),
             "sensationalism": round(avg_sensational * 10, 1),

@@ -164,10 +164,16 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         )
 
         dims = synthesis.get("dimensions", {})
+        propaganda_score = round(
+            max((float(item.get("score", 0.0)) for item in propaganda_profile.get("techniques", [])), default=0.0) * 100,
+            1,
+        )
+        dims["propaganda"] = propaganda_score
         bs_index = compute_bs_index(
             float(dims.get("falsehood", 0.0)),
             float(dims.get("spam", 0.0)),
             float(dims.get("harm", 0.0)),
+            propaganda_score,
         )
         badge_level, badge_label = compute_badge(bs_index)
 
