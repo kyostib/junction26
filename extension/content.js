@@ -3,18 +3,20 @@
 (function () {
   "use strict";
 
-  console.info(
-    "%c[BS Meter] Extension content script LOADED on: " + window.location.href,
-    "background: #1d4ed8; color: #ffffff; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 14px;"
-  );
-
-  let API_BASE_URL = "http://localhost:8000";
+  let API_BASE_URL = null;
   let enabled = true;
+  let isConfigLoaded = false;
   let currentProfileHandle = null;
   let currentProfileData = null;
   let hideOverlayTimeout = null;
   let isOverlayPinned = false;
   let pollingInterval = null;
+  let pollAttempts = 0;
+
+  console.info(
+    `%c[BS Meter] Content script initialized on: ${window.location.href}`,
+    "background: #1d4ed8; color: #ffffff; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 13px;"
+  );
 
   // Reserved paths that are NOT user profiles
   const RESERVED_WORDS = new Set([
@@ -27,26 +29,78 @@
     "with_replies", "highlights", "articles", "media", "likes", "superfollows"
   ]);
 
-  // Load user settings
-  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(["apiBaseUrl", "enabled"], (res) => {
-      if (res.apiBaseUrl) API_BASE_URL = res.apiBaseUrl.replace(/\/+$/, "");
-      if (typeof res.enabled === "boolean") enabled = res.enabled;
-      console.info(`[BS Meter] Storage loaded: API_BASE_URL = ${API_BASE_URL}, Enabled = ${enabled}`);
-      checkCurrentPage();
-    });
+  // Load user settings asynchronously before any network calls are made
+  function loadConfig() {
+    return new Promise((resolve) => {
+      if (typeof chrome === "undefined" || !chrome.storage) {
+        isConfigLoaded = true;
+        return resolve();
+      }
 
-    chrome.storage.onChanged.addListener((changes) => {
-      if (changes.apiBaseUrl) API_BASE_URL = changes.apiBaseUrl.newValue.replace(/\/+$/, "");
-      if (changes.enabled) {
-        enabled = changes.enabled.newValue;
-        console.info(`[BS Meter] Settings changed: Enabled = ${enabled}`);
+      chrome.storage.local.get(["apiBaseUrl", "enabled"], (local) => {
+        if (local && local.apiBaseUrl) {
+          API_BASE_URL = local.apiBaseUrl.replace(/\/+$/, "");
+          if (typeof local.enabled === "boolean") enabled = local.enabled;
+          isConfigLoaded = true;
+          console.info(`[BS Meter] Config loaded from local storage: API = ${API_BASE_URL}`);
+          return resolve();
+        }
+
+        // Fallback to sync storage
+        if (chrome.storage.sync) {
+          chrome.storage.sync.get(["apiBaseUrl", "enabled"], (sync) => {
+            if (sync && sync.apiBaseUrl) {
+              API_BASE_URL = sync.apiBaseUrl.replace(/\/+$/, "");
+              if (typeof sync.enabled === "boolean") enabled = sync.enabled;
+            }
+            isConfigLoaded = true;
+            console.info(`[BS Meter] Config loaded from sync storage: API = ${API_BASE_URL || "(none)"}`);
+            resolve();
+          });
+        } else {
+          isConfigLoaded = true;
+          resolve();
+        }
+      });
+    });
+  }
+
+  // Listen for real-time config updates pushed from popup.js
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === "CONFIG_UPDATED") {
+        if (msg.apiBaseUrl) API_BASE_URL = msg.apiBaseUrl.replace(/\/+$/, "");
+        if (typeof msg.enabled === "boolean") enabled = msg.enabled;
+        console.info(`[BS Meter] Real-time config update applied: API = ${API_BASE_URL}, Enabled = ${enabled}`);
         if (!enabled) {
           removeExistingBadges();
           hideOverlay(true);
         } else {
           checkCurrentPage();
         }
+      }
+    });
+  }
+
+  // Listen for storage changes
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes) => {
+      let updated = false;
+      if (changes.apiBaseUrl) {
+        API_BASE_URL = changes.apiBaseUrl.newValue.replace(/\/+$/, "");
+        updated = true;
+      }
+      if (changes.enabled) {
+        enabled = changes.enabled.newValue;
+        updated = true;
+        if (!enabled) {
+          removeExistingBadges();
+          hideOverlay(true);
+        }
+      }
+      if (updated && enabled) {
+        console.info(`[BS Meter] Storage changed: API = ${API_BASE_URL}`);
+        checkCurrentPage();
       }
     });
   }
@@ -129,7 +183,7 @@
               .map(
                 (f) => `
                 <div class="bs-flag-item">
-                  • <b>${f.type.toUpperCase()}:</b> ${f.summary}
+                  • <b>${(f.type || "SIGNAL").toUpperCase()}:</b> ${f.summary}
                   ${f.evidence_url ? `<a href="${f.evidence_url}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Source: ${f.evidence_title || "Context.dev Evidence"}</a>` : ""}
                 </div>`
               )
@@ -171,7 +225,7 @@
           </div>
         </div>
         <div style="font-size:11px; color:#9ca3af; line-height:1.45;">
-          Context.dev is scraping recent tweets, uncloaking links, and verifying claims against authoritative web evidence. Results refresh automatically.
+          Context.dev is scraping recent tweets, uncloaking shortened links, and verifying claims against authoritative web evidence. Results refresh automatically.
         </div>
         <div class="bs-powered-by">Powered by <b>Context.dev</b></div>
       `;
@@ -210,7 +264,6 @@
       return null;
     }
 
-    // Support standard Twitter handles
     if (!/^[a-z0-9_]{1,50}$/.test(candidate)) {
       return null;
     }
@@ -229,8 +282,8 @@
       '[data-testid="UserName"]',
       '[data-testid="User-Name"]',
       '[data-testid="UserProfileHeader_Items"]',
+      'div[data-testid="primaryColumn"] [data-testid="UserName"]',
       'div[data-testid="primaryColumn"] h2',
-      'div[data-testid="primaryColumn"] div[dir="ltr"]',
       'main header'
     ];
     for (const selector of candidateSelectors) {
@@ -247,20 +300,30 @@
       clearInterval(pollingInterval);
       pollingInterval = null;
     }
+    pollAttempts = 0;
   }
 
+  // Request BS Index evaluation for handle via Extension Background Service Worker
   async function fetchProfileBSIndex(handle) {
-    console.info(`[BS Meter] Requesting BS Index evaluation for @${handle} from ${API_BASE_URL}...`);
+    if (!API_BASE_URL) {
+      console.warn("[BS Meter] API Address not configured yet. Please open the BS Meter popup and enter your API URL.");
+      return null;
+    }
 
-    // 1. Try background worker
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
       try {
         const response = await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            console.warn("[BS Meter] Background message timed out after 10s");
+            resolve(null);
+          }, 10000);
+
           chrome.runtime.sendMessage(
             { type: "BATCH_LOOKUP", usernames: [handle], apiUrl: API_BASE_URL },
             (res) => {
+              clearTimeout(timeout);
               if (chrome.runtime.lastError) {
-                console.warn("[BS Meter] Background message error:", chrome.runtime.lastError.message);
+                console.warn("[BS Meter] Background worker error:", chrome.runtime.lastError.message);
                 resolve(null);
               } else {
                 resolve(res);
@@ -270,29 +333,25 @@
         });
 
         if (response && response.success && response.data && response.data.results) {
-          console.info(`[BS Meter] Received results for @${handle} via Background worker:`, response.data.results[handle]);
-          return response.data.results[handle];
+          const result = response.data.results[handle];
+          if (result) {
+            console.info(`[BS Meter] Evaluation for @${handle}: status=${result.status}, score=${result.bs_index}`);
+            return result;
+          }
+        } else if (response && !response.success) {
+          console.warn("[BS Meter] API error response:", response.error);
         }
       } catch (err) {
-        console.warn("[BS Meter] Background proxy failed, trying direct fetch:", err);
+        if (err.message && err.message.includes("Extension context invalidated")) {
+          console.warn("[BS Meter] Extension updated. Please refresh this page (Cmd+Shift+R) to reconnect.");
+          return null;
+        }
+        console.warn("[BS Meter] Background request failed:", err);
       }
+    } else {
+      console.warn("[BS Meter] Extension context disconnected. Please refresh the page.");
     }
 
-    // 2. Direct fetch fallback
-    try {
-      const resp = await fetch(`${API_BASE_URL}/api/v1/overlay/twitter/batch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernames: [handle] }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        console.info(`[BS Meter] Received results for @${handle} via Direct fetch:`, data.results?.[handle]);
-        return (data.results || {})[handle];
-      }
-    } catch (e) {
-      console.error("[BS Meter] Direct API fetch error:", e);
-    }
     return null;
   }
 
@@ -341,6 +400,8 @@
       if (level === "low") labelText = `✓ BS Index: ${score} (Low BS)`;
       else if (level === "medium") labelText = `⚠️ BS Index: ${score} (Caution)`;
       else labelText = `🚨 BS Index: ${score} (High BS)`;
+    } else if (status === "analyzing") {
+      labelText = "⏳ Scraping & Verifying Claims...";
     }
 
     badge.className = `bs-meter-profile-badge bs-badge-${level}`;
@@ -352,8 +413,39 @@
     }
   }
 
+  function startPolling(handle) {
+    if (pollingInterval) clearInterval(pollingInterval);
+    pollAttempts = 0;
+
+    pollingInterval = setInterval(async () => {
+      pollAttempts++;
+      if (currentProfileHandle !== handle) {
+        clearInterval(pollingInterval);
+        return;
+      }
+
+      if (pollAttempts > 35) { // 35 * 3s = 105s timeout
+        console.warn(`[BS Meter] Polling timeout reached for @${handle}`);
+        clearInterval(pollingInterval);
+        return;
+      }
+
+      const updated = await fetchProfileBSIndex(handle);
+      if (updated && currentProfileHandle === handle) {
+        currentProfileData = updated;
+        const header = findProfileHeaderElement();
+        if (header) renderProfileBadge(header, handle, updated);
+
+        if (updated.status === "ready") {
+          console.info(`[BS Meter] Analysis COMPLETE for @${handle}! BS Index: ${updated.bs_index}`);
+          clearInterval(pollingInterval);
+        }
+      }
+    }, 3000);
+  }
+
   function checkCurrentPage() {
-    if (!enabled) return;
+    if (!enabled || !isConfigLoaded) return;
     const handle = getProfileHandleFromUrl();
 
     if (!handle) {
@@ -368,39 +460,40 @@
 
     // Profile page active
     if (currentProfileHandle !== handle) {
-      console.info(`%c[BS Meter] Profile detected: @${handle}`, "color: #10b981; font-weight: bold; font-size: 14px;");
+      console.info(
+        `%c[BS Meter] Profile detected: @${handle}`,
+        "color: #10b981; font-weight: bold; font-size: 14px;"
+      );
       currentProfileHandle = handle;
       currentProfileData = { status: "queued", badge_level: "pending" };
       removeExistingBadges();
 
-      // Trigger background scrape immediately!
-      fetchProfileBSIndex(handle).then((data) => {
-        if (data && currentProfileHandle === handle) {
-          currentProfileData = data;
-          const container = findProfileHeaderElement();
-          if (container) renderProfileBadge(container, handle, data);
+      // Mount pending badge immediately
+      const initialContainer = findProfileHeaderElement();
+      if (initialContainer) {
+        renderProfileBadge(initialContainer, handle, currentProfileData);
+      }
 
-          if (data.status === "queued" || data.status === "analyzing") {
-            if (pollingInterval) clearInterval(pollingInterval);
-            pollingInterval = setInterval(async () => {
-              if (currentProfileHandle !== handle) {
-                clearInterval(pollingInterval);
-                return;
-              }
-              const updated = await fetchProfileBSIndex(handle);
-              if (updated && updated.status === "ready") {
-                clearInterval(pollingInterval);
-                currentProfileData = updated;
-                const header = findProfileHeaderElement();
-                if (header) renderProfileBadge(header, handle, updated);
-              }
-            }, 4000);
+      // Trigger fetch and begin polling
+      fetchProfileBSIndex(handle).then((data) => {
+        if (currentProfileHandle === handle) {
+          if (data) {
+            currentProfileData = data;
+            const container = findProfileHeaderElement();
+            if (container) renderProfileBadge(container, handle, data);
+
+            if (data.status === "ready") {
+              console.info(`[BS Meter] Instant cached evaluation ready for @${handle}`);
+              return;
+            }
           }
+          // Start polling for async pipeline completion
+          startPolling(handle);
         }
       });
     }
 
-    // Attach badge if header container is rendered
+    // Reattach badge if header re-rendered by React / Virtual DOM
     const headerContainer = findProfileHeaderElement();
     if (headerContainer && !headerContainer.querySelector(`.bs-meter-profile-badge[data-handle="${handle}"]`)) {
       renderProfileBadge(headerContainer, handle, currentProfileData || { status: "queued", badge_level: "pending" });
@@ -450,7 +543,7 @@
 
   window.addEventListener("popstate", () => setTimeout(checkCurrentPage, 60));
 
-  // Monitor DOM mutations
+  // Monitor DOM mutations (React view updates)
   const observer = new MutationObserver(() => {
     if (currentProfileHandle) {
       const headerContainer = findProfileHeaderElement();
@@ -468,6 +561,9 @@
     });
   }
 
-  checkCurrentPage();
-  setInterval(checkCurrentPage, 1000);
+  // Wait for stored settings to load before starting
+  loadConfig().then(() => {
+    checkCurrentPage();
+    setInterval(checkCurrentPage, 1000);
+  });
 })();
