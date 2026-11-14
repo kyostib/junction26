@@ -1,11 +1,15 @@
 TECHNIQUES = (
-    ("fear_appeal", "Fear appeal", "Using threats or fear to influence the audience."),
+    ("fear_appeal", "Fear appeal", "Promoting a position by emphasizing a threat to create anxiety, especially when exaggerated or unsupported. Do not confuse with a proportionate, sourced risk assessment."),
     ("scapegoating", "Scapegoating", "Assigning broad blame to a person or group for a complex problem."),
     ("false_dilemma", "False dilemma", "Presenting a choice as having only two options when other plausible options exist."),
-    ("loaded_language", "Loaded language", "Using emotionally charged wording in place of substantive support."),
+    ("loaded_language", "Loaded language", "Choosing emotionally charged words or metaphors to influence rather than inform precisely. Do not confuse with accurate, proportionate descriptions of genuinely emotional events."),
     ("cherry_picking", "Cherry-picking", "Presenting selected evidence while omitting relevant counterevidence or context."),
     ("repetition", "Repetition", "Repeating the same slogan or claim across multiple sampled posts."),
-    ("us_vs_them", "Us-versus-them", "Framing groups as opposing sides to encourage division."),
+    ("us_vs_them", "Us-versus-them", "Dividing people into opposing in-groups and out-groups to encourage loyalty or hostility. Do not confuse with describing disagreement without stereotyping or delegitimizing people."),
+    ("name_calling", "Name calling / labeling", "Attaching an insulting label to provoke rejection without argument. Do not confuse with a specific, supportable description such as 'convicted fraudster' when a conviction exists."),
+    ("whataboutism", "Whataboutism", "Deflecting criticism by pointing to another party's alleged wrongdoing instead of addressing the criticism. Do not confuse with a relevant comparison that also answers the original point."),
+    ("flag_waving", "Flag waving", "Using national, cultural, or group loyalty to pressure agreement or portray dissent as disloyal. Do not confuse with good-faith expressions of identity or civic pride."),
+    ("bandwagon", "Bandwagon", "Claiming popularity or majority belief proves a position is right. Do not confuse with polling used only to describe popularity."),
 )
 
 
