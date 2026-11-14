@@ -14,6 +14,7 @@ from app.pipeline.extract_claims import extract_claims
 from app.pipeline.scoring import compute_badge, prioritize
 from app.providers.context_dev import ContextDevProvider
 from app.providers.llm import get_llm_provider
+from app.schemas.claims import ClaimExtraction, ClaimType
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +94,34 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         links_to_scrape = list(link_sources.items())[:6]
         scraped_links = await asyncio.gather(*(scrape_link_with_source(u, s) for u, s in links_to_scrape))
 
-        # 2. Extract verifiable factual claims
+        # 2. Inspect attached tweet images (multimodal vision & OCR)
+        images_to_analyze = []
+        seen_images = set()
+        for item in posts:
+            for img_url in item.images:
+                if img_url not in seen_images:
+                    seen_images.add(img_url)
+                    images_to_analyze.append({
+                        "url": img_url,
+                        "post_id": item.platform_post_id,
+                        "caption": item.text[:120],
+                    })
+        images_to_analyze = images_to_analyze[:settings.max_images_to_analyze]
         llm = get_llm_provider()
+        image_analyses = await llm.analyze_images(images_to_analyze)
+
+        # 3. Extract verifiable factual claims from text and image headlines
         claims = await extract_claims(posts, llm)
+        for img_res in image_analyses:
+            for v_claim in img_res.get("visual_claims", []):
+                claims.append(
+                    ClaimExtraction(
+                        post_id=img_res["post_id"],
+                        text=v_claim,
+                        claim_type=ClaimType.factual,
+                        importance=0.85,
+                    )
+                )
 
         # Persist claims using unique claim IDs
         claim_rows = {}
@@ -114,7 +140,7 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             claim_rows[item.id] = row
         await session.flush()
 
-        # 3. Ground truth research via Context.dev Web Search
+        # 4. Ground truth research via Context.dev Web Search
         selected = prioritize(claims, settings.max_claims_to_verify)
         claim_results = []
 
@@ -151,12 +177,13 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 "evidence": [e.model_dump(mode="json") for e in evidence],
             })
 
-        # 4. Final Unified LLM Synthesis
+        # 5. Final Unified LLM Synthesis
         synthesis = await llm.synthesize_analysis(
             profile=profile_data,
             posts=posts,
             scraped_links=scraped_links,
             grounded_claims=claim_results,
+            image_analyses=image_analyses,
         )
 
         bs_index = float(synthesis.get("bs_index", 0.0))
@@ -176,6 +203,18 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "bio_links": profile_data.bio_links,
             "posts_analyzed": len(posts),
             "max_tweets_configured": max_tweets,
+            "images_analyzed": len(image_analyses),
+            "image_findings": [
+                {
+                    "url": img.get("url"),
+                    "description": img.get("description"),
+                    "extracted_text": img.get("extracted_text"),
+                    "is_scam": img.get("is_scam"),
+                    "is_misleading": img.get("is_misleading"),
+                    "flags": img.get("flags", []),
+                }
+                for img in image_analyses
+            ],
             "factual_claims": sum(c.claim_type.value == "factual" for c in claims),
             "claims_analyzed": len(claims),
             "claims_verified": len(selected),

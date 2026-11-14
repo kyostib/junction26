@@ -19,12 +19,15 @@ class LLMProvider(Protocol):
 
     async def evaluate_spam_and_harm(self, posts: list[PostData], scraped_links: list[dict]) -> dict: ...
 
+    async def analyze_images(self, images: list[dict]) -> list[dict]: ...
+
     async def synthesize_analysis(
         self,
         profile: ProfileData,
         posts: list[PostData],
         scraped_links: list[dict],
         grounded_claims: list[dict],
+        image_analyses: list[dict] = [],
     ) -> dict: ...
 
 
@@ -36,10 +39,11 @@ class GeminiLLMProvider:
         self.model = model
         self.fallback_demo = DemoLLMProvider()
 
-    async def _generate_json(self, prompt: str) -> dict | list | None:
+    async def _generate_json(self, prompt: str = "", parts: list[dict] | None = None) -> dict | list | None:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        content_parts = parts if parts is not None else [{"text": prompt}]
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
+            "contents": [{"parts": content_parts}],
             "generationConfig": {
                 "responseMimeType": "application/json",
                 "temperature": 0.1,
@@ -173,12 +177,87 @@ class GeminiLLMProvider:
 
         return await self.fallback_demo.evaluate_spam_and_harm(posts, scraped_links)
 
+    async def _fetch_image_base64(self, url: str) -> tuple[str, str] | None:
+        try:
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200 and len(resp.content) > 50:
+                    ctype = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                    if not ctype.startswith("image/"):
+                        ctype = "image/jpeg"
+                    import base64
+                    return ctype, base64.b64encode(resp.content).decode("utf-8")
+        except Exception as e:
+            logger.warning("Could not download image %s for vision analysis: %s", url, e)
+        return None
+
+    async def analyze_images(self, images: list[dict]) -> list[dict]:
+        results = []
+        for img in images:
+            url = img.get("url", "")
+            post_id = img.get("post_id", "")
+            base64_data = img.get("base64_data")
+            mime_type = img.get("mime_type")
+
+            if not base64_data and url:
+                fetched = await self._fetch_image_base64(url)
+                if fetched:
+                    mime_type, base64_data = fetched
+
+            if base64_data and mime_type:
+                prompt = (
+                    "You are a multimodal forensic image analyzer for social media credibility.\n"
+                    "Analyze this image from a post. Inspect text in screenshots, charts, headlines, QR codes, or infographics.\n"
+                    "Return a JSON object with this exact schema:\n"
+                    "{\n"
+                    '  "description": string (short visual summary),\n'
+                    '  "extracted_text": string (all text/headlines visible inside the image),\n'
+                    '  "visual_claims": array of strings (testable factual claims asserted in the image),\n'
+                    '  "is_scam": boolean (true if crypto presale, fake airdrop, phishing QR, giveaway bait),\n'
+                    '  "is_misleading": boolean (true if fabricated news screenshot, manipulated graph, deceptive meme),\n'
+                    '  "flags": array of strings (specific warnings or issues detected)\n'
+                    "}"
+                )
+                parts = [
+                    {"text": prompt},
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64_data,
+                        }
+                    },
+                ]
+                try:
+                    res = await self._generate_json(parts=parts)
+                    if isinstance(res, dict) and "description" in res:
+                        results.append({
+                            "url": url,
+                            "post_id": post_id,
+                            "description": str(res.get("description", "")),
+                            "extracted_text": str(res.get("extracted_text", "")),
+                            "visual_claims": [str(c) for c in res.get("visual_claims", [])],
+                            "is_scam": bool(res.get("is_scam", False)),
+                            "is_misleading": bool(res.get("is_misleading", False)),
+                            "flags": [str(f) for f in res.get("flags", [])],
+                        })
+                        continue
+                except Exception as e:
+                    logger.warning("Gemini multimodal image analysis failed for %s: %s", url, e)
+
+            # Fallback to heuristic demo analyzer for this image
+            fallback_res = await self.fallback_demo.analyze_images([img])
+            if fallback_res:
+                results.append(fallback_res[0])
+
+        return results
+
     async def synthesize_analysis(
         self,
         profile: ProfileData,
         posts: list[PostData],
         scraped_links: list[dict],
         grounded_claims: list[dict],
+        image_analyses: list[dict] = [],
     ) -> dict:
         profile_summary = {
             "username": profile.username,
@@ -187,7 +266,7 @@ class GeminiLLMProvider:
             "bio_links": profile.bio_links,
         }
         posts_summary = [
-            {"id": p.platform_post_id, "text": p.text, "links": p.metadata.get("links", [])}
+            {"id": p.platform_post_id, "text": p.text, "links": p.metadata.get("links", []), "images": p.images}
             for p in posts
         ]
         links_summary = [
@@ -213,25 +292,38 @@ class GeminiLLMProvider:
             }
             for c in grounded_claims
         ]
+        images_summary = [
+            {
+                "url": img.get("url"),
+                "post_id": img.get("post_id"),
+                "description": img.get("description"),
+                "extracted_text": img.get("extracted_text"),
+                "is_scam": img.get("is_scam"),
+                "is_misleading": img.get("is_misleading"),
+                "flags": img.get("flags", []),
+            }
+            for img in image_analyses
+        ]
 
         prompt = (
             "You are the BS Index synthesis engine. Your goal is to critically evaluate a social media account's credibility, honesty, and safety.\n"
-            "Analyze the user's profile bio, bio links, recent posts, uncloaked landing pages from external links, and verified factual claims with web evidence.\n\n"
+            "Analyze the user's profile bio, bio links, recent posts, uncloaked landing pages from external links, verified factual claims with web evidence, and attached tweet images.\n\n"
             f"User Profile:\n{json.dumps(profile_summary, indent=2)}\n\n"
             f"Recent Posts ({len(posts_summary)}):\n{json.dumps(posts_summary, indent=2)}\n\n"
             f"Uncloaked External Links ({len(links_summary)}):\n{json.dumps(links_summary, indent=2)}\n\n"
             f"Verified Factual Claims & Evidence ({len(claims_summary)}):\n{json.dumps(claims_summary, indent=2)}\n\n"
+            f"Attached Tweet Images Evaluated ({len(images_summary)}):\n{json.dumps(images_summary, indent=2)}\n\n"
             "Task:\n"
             "1. Calculate an overarching BS Index from 0.0 (completely honest, factual, and safe) to 100.0 (blatant falsehoods, phishing/crypto scam, or severe harm).\n"
             "2. Break down the assessment into specific dimensions (0.0 to 100.0):\n"
-            "   - falsehood: Extent to which claims are contradicted or ungrounded by evidence (0 = truthful, 100 = completely false).\n"
-            "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing, affiliate bait in bio or posts (0 = clean, 100 = blatant scam).\n"
+            "   - falsehood: Extent to which claims (including text from screenshot images) are contradicted or ungrounded (0 = truthful, 100 = completely false).\n"
+            "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing QR codes/banners in images, bio or posts (0 = clean, 100 = blatant scam).\n"
             "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception (0 = safe, 100 = harmful).\n"
             "   - evidence_quality: Quality and reliability of sources available (0.0 to 10.0 scale).\n"
-            "   - misleadingness: Degree of cherry-picking, deception, or half-truths (0.0 to 10.0 scale).\n"
+            "   - misleadingness: Degree of cherry-picking, deception, or doctored visual elements (0.0 to 10.0 scale).\n"
             "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype (0.0 to 10.0 scale).\n"
             "3. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
-            "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams (including suspicious bio links or uncloaked pages), or harm issues.\n\n"
+            "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams (including suspicious bio links, scam images, or uncloaked pages), or harm issues.\n\n"
             "Return a JSON object with this exact schema:\n"
             "{\n"
             '  "bs_index": float between 0.0 and 100.0,\n'
@@ -285,7 +377,7 @@ class GeminiLLMProvider:
         except Exception as e:
             logger.warning("Gemini synthesis analysis failed: %s. Using heuristic fallback.", e)
 
-        return await self.fallback_demo.synthesize_analysis(profile, posts, scraped_links, grounded_claims)
+        return await self.fallback_demo.synthesize_analysis(profile, posts, scraped_links, grounded_claims, image_analyses)
 
 
 class DemoLLMProvider:
@@ -425,12 +517,61 @@ class DemoLLMProvider:
             "harm_flags": list(set(harm_flags))[:3],
         }
 
+    async def analyze_images(self, images: list[dict]) -> list[dict]:
+        results = []
+        for img in images:
+            url = img.get("url", "")
+            post_id = img.get("post_id", "")
+            caption = (img.get("caption") or "").lower()
+            url_lower = url.lower()
+
+            description = "Public media attachment"
+            extracted_text = ""
+            visual_claims = []
+            is_scam = False
+            is_misleading = False
+            flags = []
+
+            if any(x in url_lower or x in caption for x in ("moon", "great_wall", "space_photo")):
+                description = "Photograph purporting to show man-made structures visible from space."
+                extracted_text = "The Great Wall is visible from lunar orbit with the naked eye."
+                visual_claims.append("The Great Wall of China is visible from the Moon with the naked eye.")
+                is_misleading = True
+                flags.append("Visual asset asserts disproven claim regarding Great Wall visibility from Moon.")
+            elif any(x in url_lower or x in caption for x in ("presale", "airdrop", "100x", "token", "allocation", "qr")):
+                description = "Promotional graphic announcing token allocation or pre-sale."
+                extracted_text = "Exclusive Token Pre-Sale: 100x Potential Free Allocation."
+                is_scam = True
+                flags.append("Crypto token pre-sale / fake airdrop promotional banner detected in image.")
+            elif any(x in url_lower or x in caption for x in ("climate", "temperature", "nasa", "trend")):
+                description = "Data chart displaying global temperature trends."
+                extracted_text = "NASA Goddard Institute for Space Studies Global Temperature Anomaly."
+                visual_claims.append("Global average temperatures have risen substantially since the late 19th century.")
+            elif any(x in url_lower or x in caption for x in ("fake_news", "screenshot", "fabricated", "breaking")):
+                description = "Screenshot of breaking news headline."
+                extracted_text = "Breaking News Screenshot."
+                is_misleading = True
+                flags.append("Screenshot of unverified or potentially manipulated news headline.")
+
+            results.append({
+                "url": url,
+                "post_id": post_id,
+                "description": description,
+                "extracted_text": extracted_text,
+                "visual_claims": visual_claims,
+                "is_scam": is_scam,
+                "is_misleading": is_misleading,
+                "flags": flags,
+            })
+        return results
+
     async def synthesize_analysis(
         self,
         profile: ProfileData,
         posts: list[PostData],
         scraped_links: list[dict],
         grounded_claims: list[dict],
+        image_analyses: list[dict] = [],
     ) -> dict:
         spam_score = 0.0
         harm_score = 0.0
@@ -536,6 +677,29 @@ class DemoLLMProvider:
                     "evidence_url": top_ev.get("url"),
                     "evidence_title": top_ev.get("title") or "Context.dev Fact Check",
                 })
+
+        # 5. Inspect image analyses
+        for img in image_analyses:
+            img_url = img.get("url")
+            if img.get("is_scam"):
+                spam_score = max(spam_score, 88.0)
+                for f_text in img.get("flags", []):
+                    top_flags.append({
+                        "type": "spam",
+                        "summary": f_text,
+                        "assessment": "visual_scam_banner",
+                        "evidence_url": img_url,
+                        "evidence_title": "Scam Image / Infographic",
+                    })
+            if img.get("is_misleading"):
+                for f_text in img.get("flags", []):
+                    top_flags.append({
+                        "type": "falsehood",
+                        "summary": f_text,
+                        "assessment": "misleading_visual_media",
+                        "evidence_url": img_url,
+                        "evidence_title": "Flagged Tweet Image",
+                    })
 
         spam_score = round(min(100.0, spam_score), 1)
         harm_score = round(min(100.0, harm_score), 1)

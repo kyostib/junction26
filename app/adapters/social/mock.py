@@ -23,12 +23,20 @@ class MockSocialAdapter(SocialProfileAdapter):
             "I was wrong about the Moon claim after checking the sources. Here's a correction: it is not visible from the Moon unaided.",
             "Read the report at https://example.org/report — it deserves a closer look.",
         ]
+        images_map = {
+            2: ["https://demo.invalid/images/great_wall_moon.jpg"],
+            3: ["https://demo.invalid/images/nasa_climate_chart.png"],
+        }
         return [
             PostData(
                 platform_post_id=f"mock-{i}",
                 text=text,
                 post_url=f"{profile.profile_url}/posts/{i}",
-                metadata={"links": ["https://example.org/report"] if "https://example.org/report" in text else []},
+                images=images_map.get(i, []),
+                metadata={
+                    "links": ["https://example.org/report"] if "https://example.org/report" in text else [],
+                    "images": images_map.get(i, []),
+                },
             )
             for i, text in enumerate(fixtures[:limit], 1)
         ]

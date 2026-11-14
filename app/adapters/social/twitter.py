@@ -59,12 +59,14 @@ class ContextDevTwitterAdapter(SocialProfileAdapter):
             post_id = item.get("id") or f"{username}-{i}"
             text = item.get("text", "")
             links = item.get("links", [])
+            images = item.get("images", [])
             posts.append(
                 PostData(
                     platform_post_id=post_id,
                     text=text,
                     post_url=f"https://x.com/{username}/status/{post_id}",
-                    metadata={"links": links},
+                    images=images,
+                    metadata={"links": links, "images": images},
                 )
             )
         return posts
