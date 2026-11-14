@@ -47,8 +47,8 @@ def test_opinion_not_prioritized_and_scoring_scale():
         spam_score=100,
         harm_score=50,
     )
-    # accuracy -1 -> falsehood 100. bs_index = 0.45*100 + 0.35*100 + 0.2*50 = 45 + 35 + 10 = 90
-    assert result["bs_index"] == 90.0
+    # A fully severe dimension reaches the top of the normalized scale.
+    assert result["bs_index"] == 100.0
     assert result["badge_level"] == "high"
 
 
@@ -63,6 +63,12 @@ def test_unknown_evidence_does_not_increase_bs_index():
     )
     result = aggregate([(1, unknown)])
     assert result["bs_index"] == 0
+
+
+def test_single_severe_dimension_is_not_diluted():
+    from app.pipeline.scoring import compute_bs_index
+
+    assert compute_bs_index(falsehood=0, spam=88, harm=0) >= 88
 
 
 @pytest.mark.asyncio
@@ -127,7 +133,6 @@ def test_overlay_schema_has_summary_and_details():
         summary="High credibility profile.",
         details={
             "posts_analyzed": 5,
-            "images_analyzed": 2,
             "claims": [{"claim": "Sample claim", "assessment": "supported"}],
         },
     )
@@ -257,8 +262,6 @@ async def test_end_to_end_analysis_pipeline_with_bio():
     assert "bio" in result
     assert "bio_links" in result
     assert "max_tweets_configured" in result
-    assert "images_analyzed" in result
-    assert "image_findings" in result
     assert "dimensions" in result
     assert "top_flags" in result
     assert result["posts_analyzed"] <= result["max_tweets_configured"]
@@ -282,36 +285,6 @@ def test_image_url_extraction_helpers():
     assert "https://example.org/article" in web_links
     assert "https://pbs.twimg.com/media/graphic123.jpg" not in web_links
     assert "https://pbs.twimg.com/media/banner.png" not in web_links
-
-
-@pytest.mark.asyncio
-async def test_image_analysis_claim_and_scam_detection():
-    from app.providers.llm import DemoLLMProvider
-
-    llm = DemoLLMProvider()
-    images = [
-        {
-            "url": "https://pbs.twimg.com/media/great_wall_space_photo.jpg",
-            "post_id": "p-1",
-            "caption": "Photo from lunar orbit",
-        },
-        {
-            "url": "https://pbs.twimg.com/media/presale_token_100x_banner.png",
-            "post_id": "p-2",
-            "caption": "Free allocation presale token",
-        },
-    ]
-
-    analyses = await llm.analyze_images(images)
-    assert len(analyses) == 2
-
-    # Image 1 contains a visual claim
-    assert any("Great Wall" in c for c in analyses[0]["visual_claims"])
-    assert analyses[0]["is_misleading"] is True
-
-    # Image 2 is identified as a scam banner
-    assert analyses[1]["is_scam"] is True
-    assert any("pre-sale" in f.lower() or "airdrop" in f.lower() for f in analyses[1]["flags"])
 
 
 @pytest.mark.asyncio
@@ -349,8 +322,6 @@ async def test_overlay_legacy_cache_invalidation_and_rich_details():
                 "posts_analyzed": 8,
                 "bio": "Crypto researcher & dev",
                 "bio_links": ["https://example.org/project"],
-                "images_analyzed": 1,
-                "image_findings": [{"url": "https://pbs.twimg.com/media/sample.jpg", "description": "Chart"}],
                 "claims": [{"claim": "Test claim", "assessment": "supported"}],
                 "top_flags": [],
             },

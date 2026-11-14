@@ -11,11 +11,11 @@ from app.core.config import get_settings
 from app.db.models import Analysis, Claim, Evidence, Post, Profile
 from app.pipeline.evaluate_evidence import evaluate_evidence
 from app.pipeline.extract_claims import extract_claims
-from app.pipeline.profile_signals import analyze_propaganda, summarize_claim_evidence
-from app.pipeline.scoring import compute_badge, prioritize
+from app.pipeline.profile_signals import summarize_claim_evidence
+from app.pipeline.scoring import compute_badge, compute_bs_index, prioritize
 from app.providers.context_dev import ContextDevProvider
 from app.providers.llm import get_llm_provider
-from app.schemas.claims import ClaimExtraction, ClaimType
+from app.schemas.claims import ClaimExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -95,34 +95,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         links_to_scrape = list(link_sources.items())[:6]
         scraped_links = await asyncio.gather(*(scrape_link_with_source(u, s) for u, s in links_to_scrape))
 
-        # 2. Inspect attached tweet images (multimodal vision & OCR)
-        images_to_analyze = []
-        seen_images = set()
-        for item in posts:
-            for img_url in item.images:
-                if img_url not in seen_images:
-                    seen_images.add(img_url)
-                    images_to_analyze.append({
-                        "url": img_url,
-                        "post_id": item.platform_post_id,
-                        "caption": item.text[:120],
-                    })
-        images_to_analyze = images_to_analyze[:settings.max_images_to_analyze]
         llm = get_llm_provider()
-        image_analyses = await llm.analyze_images(images_to_analyze)
 
-        # 3. Extract verifiable factual claims from text and image headlines
+        # 2. Extract verifiable factual claims from text
         claims = await extract_claims(posts, llm)
-        for img_res in image_analyses:
-            for v_claim in img_res.get("visual_claims", []):
-                claims.append(
-                    ClaimExtraction(
-                        post_id=img_res["post_id"],
-                        text=v_claim,
-                        claim_type=ClaimType.factual,
-                        importance=0.85,
-                    )
-                )
+        propaganda_profile = await llm.evaluate_propaganda(posts)
 
         # Persist claims using unique claim IDs
         claim_rows = {}
@@ -141,7 +118,7 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             claim_rows[item.id] = row
         await session.flush()
 
-        # 4. Ground truth research via Context.dev Web Search
+        # 3. Ground truth research via Context.dev Web Search
         selected = prioritize(claims, settings.max_claims_to_verify)
         claim_results = []
 
@@ -178,18 +155,21 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 "evidence": [e.model_dump(mode="json") for e in evidence],
             })
 
-        # 5. Final Unified LLM Synthesis
+        # 4. Final Unified LLM Synthesis
         synthesis = await llm.synthesize_analysis(
             profile=profile_data,
             posts=posts,
             scraped_links=scraped_links,
             grounded_claims=claim_results,
-            image_analyses=image_analyses,
         )
 
-        bs_index = float(synthesis.get("bs_index", 0.0))
-        badge_level, badge_label = compute_badge(bs_index)
         dims = synthesis.get("dimensions", {})
+        bs_index = compute_bs_index(
+            float(dims.get("falsehood", 0.0)),
+            float(dims.get("spam", 0.0)),
+            float(dims.get("harm", 0.0)),
+        )
+        badge_level, badge_label = compute_badge(bs_index)
 
         completed_now = datetime.now(timezone.utc)
         result = {
@@ -204,23 +184,12 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "bio_links": profile_data.bio_links,
             "posts_analyzed": len(posts),
             "max_tweets_configured": max_tweets,
-            "images_analyzed": len(image_analyses),
-            "image_findings": [
-                {
-                    "url": img.get("url"),
-                    "description": img.get("description"),
-                    "extracted_text": img.get("extracted_text"),
-                    "is_scam": img.get("is_scam"),
-                    "is_misleading": img.get("is_misleading"),
-                    "flags": img.get("flags", []),
-                }
-                for img in image_analyses
-            ],
             "factual_claims": sum(c.claim_type.value == "factual" for c in claims),
             "claims_analyzed": len(claims),
             "claims_verified": len(selected),
             "claims": claim_results,
-            "propaganda_profile": analyze_propaganda(posts),
+            "propaganda_profile": propaganda_profile.get("techniques", []),
+            "propaganda_analysis_status": propaganda_profile.get("status", "unavailable"),
             "claim_evidence_breakdown": summarize_claim_evidence(claim_results, len(claims)),
             "scraped_links_count": len(scraped_links),
             "source_mode": "Context.dev Search & Scrape Gateway",
