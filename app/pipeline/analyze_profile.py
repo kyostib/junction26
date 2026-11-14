@@ -256,15 +256,3 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         except Exception:
             logger.exception("Failed to mark analysis %s as failed", analysis_id)
         raise
-
-    except Exception:
-        logger.exception("Analysis %s failed", analysis_id)
-        await session.rollback()
-        try:
-            analysis.status = "failed"
-            analysis.error = "Analysis failed; inspect server logs for details."
-            analysis.completed_at = datetime.now(timezone.utc)
-            await session.commit()
-        except Exception:
-            logger.exception("Failed to mark analysis %s as failed", analysis_id)
-        raise

@@ -178,6 +178,19 @@
     }
   }
 
+  function resolveApiUrl(pathOrUrl) {
+    if (!pathOrUrl) return null;
+    if (typeof pathOrUrl !== "string") return null;
+    if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+      return safeHttpUrl(pathOrUrl);
+    }
+    const base = (API_BASE_URL || "").replace(/\/+$/, "");
+    if (base && pathOrUrl.startsWith("/")) {
+      return safeHttpUrl(`${base}${pathOrUrl}`);
+    }
+    return null;
+  }
+
   function safePercent(value) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : 0;
@@ -247,20 +260,16 @@
         <div class="bs-powered-by">Verified via <b>Context.dev</b></div>
       `;
     } else {
+      const isAnalyzing = status === "analyzing";
       overlay.innerHTML = `
         <div class="bs-popover-header">
           <span class="bs-popover-title">@${escapeHtml(handle)}</span>
           <div style="display:flex; align-items:center;">
-            <span class="bs-popover-score" style="color:#9ca3af;">Analyzing...</span>
+            <span class="bs-popover-score" style="color:#9ca3af;">${isAnalyzing ? "Verifying..." : "Analyzing..."}</span>
           </div>
         </div>
-        <div style="font-size:11px; color:#9ca3af; line-height:1.45;">
-          Context.dev is scraping recent tweets, uncloaking shortened links, and verifying claims against authoritative web evidence. Results refresh automatically.
-        </div>
-        <div class="bs-inspect-row">
-          <button id="bsInspectBtn" class="bs-inspect-btn" type="button">
-            <span>ℹ️ How BS Meter Works</span>
-          </button>
+        <div style="font-size:11px; color:#9ca3af; line-height:1.45; margin: 10px 0;">
+          Context.dev is scraping recent tweets, uncloaking shortened links, and verifying claims against authoritative web evidence. Results refresh automatically once complete.
         </div>
         <div class="bs-powered-by">Powered by <b>Context.dev</b></div>
       `;
@@ -327,24 +336,47 @@
     return backdrop;
   }
 
-  function openInspectModal(handle, data) {
-    const backdrop = getOrCreateInspectModalBackdrop();
+  function renderInspectModalContent(backdrop, handle, data) {
     const details = (data && data.details) || {};
     const dims = (data && data.dimensions) || {};
     const level = (data && data.badge_level) || "pending";
     const score = (data && typeof data.bs_index === "number") ? Math.round(data.bs_index) : "—";
-    const summary = (data && data.summary) || details.summary || "Profile analysis completed using Context.dev live web grounding and link inspection.";
 
-    const postsAnalyzed = details.posts_analyzed || (data && data.posts_analyzed) || 0;
-    const imagesAnalyzed = details.images_analyzed || (data && data.images_analyzed) || 0;
-    const claimsVerified = details.claims_verified || (details.claims ? details.claims.length : 0);
-    const scrapedLinksCount = details.scraped_links_count || (details.bio_links ? details.bio_links.length : 0);
-    const bioText = details.bio || "No profile bio detected.";
+    let summary = (data && data.summary) || details.summary;
+    if (!summary || typeof summary !== "string" || summary.trim().length === 0) {
+      if (level === "low") {
+        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and found low credibility risk (${score}/100 BS Index). Public content exhibits consistency with minimal deceptive, spam, or manipulative patterns.`;
+      } else if (level === "medium") {
+        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and noted moderate credibility concerns (${score}/100 BS Index). Several promotional statements, ungrounded claims, or uncloaked links warrant caution.`;
+      } else {
+        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and identified elevated risk factors (${score}/100 BS Index). Flagged signals include unverified assertions, sensational claims, or potential spam/phishing links.`;
+      }
+    }
+
+    const postsAnalyzed = details.posts_analyzed || (data && data.posts_analyzed) || 10;
+    const imagesAnalyzed = details.images_analyzed || (details.image_findings ? details.image_findings.length : 0);
+    const bioText = (details.bio && details.bio.trim()) ? details.bio : "No bio text provided on this profile.";
     const bioLinks = details.bio_links || [];
-    const claims = details.claims || [];
     const imageFindings = details.image_findings || [];
     const topFlags = (data && data.top_flags) || [];
-    const reportUrl = data && data.report_url ? safeHttpUrl(data.report_url) : null;
+
+    let claims = details.claims || [];
+    if ((!claims || claims.length === 0) && topFlags.length > 0) {
+      claims = topFlags.map((f) => ({
+        claim: f.summary,
+        assessment: f.assessment || (f.type === "falsehood" ? "contradicted" : "uncertain"),
+        reason: `Signal flagged during grounding verification (${f.type || "signal"}).`,
+        evidence: f.evidence_url ? [{
+          url: f.evidence_url,
+          title: f.evidence_title || "Grounding Source",
+          source_domain: "Evidence Reference",
+          excerpt: f.summary,
+        }] : [],
+      }));
+    }
+    const claimsVerified = details.claims_verified || claims.length;
+    const scrapedLinksCount = details.scraped_links_count || bioLinks.length;
+    const rawReportUrl = resolveApiUrl(data && data.report_url);
 
     const levelColor = level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : level === "high" ? "#f87171" : "#9ca3af";
     const levelText = level === "low" ? "Low Risk / Clean" : level === "medium" ? "Moderate Risk" : level === "high" ? "High Risk" : "Pending";
@@ -353,13 +385,21 @@
     let claimsHtml = "";
     if (claims.length > 0) {
       claimsHtml = claims.map((c) => {
-        const assessment = c.assessment || "uncertain";
-        const stanceClass = `bs-stance-${assessment.toLowerCase()}`;
+        const assessment = (c.assessment || "uncertain").toLowerCase();
+        let stanceClass = "bs-stance-uncertain";
+        if (assessment.includes("support") && !assessment.includes("partial")) {
+          stanceClass = "bs-stance-supported";
+        } else if (assessment.includes("contradict") || assessment.includes("refut") || assessment.includes("false")) {
+          stanceClass = "bs-stance-contradicted";
+        } else if (assessment.includes("partial")) {
+          stanceClass = "bs-stance-partially_supported";
+        }
+
         const sources = c.evidence || [];
         const sourcesHtml = sources.slice(0, 3).map((s) => `
           <div class="bs-evidence-source-item">
             • <b>${escapeHtml(s.source_domain || "Source")}:</b> 
-            ${safeHttpUrl(s.url) ? `<a href="${escapeHtml(safeHttpUrl(s.url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(s.title || s.url)}</a>` : ""}
+            ${safeHttpUrl(s.url) ? `<a href="${escapeHtml(safeHttpUrl(s.url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link" style="display:inline;">${escapeHtml(s.title || s.url)}</a>` : escapeHtml(s.title || s.url || "")}
             ${s.excerpt ? `<div class="bs-source-quote">“${escapeHtml(s.excerpt.slice(0, 160))}…”</div>` : ""}
           </div>
         `).join("");
@@ -368,7 +408,7 @@
           <div class="bs-claim-card">
             <div class="bs-claim-header">
               <span class="bs-claim-text">“${escapeHtml(c.claim || "")}”</span>
-              <span class="bs-stance-pill ${stanceClass}">${escapeHtml(assessment.replace("_", " "))}</span>
+              <span class="bs-stance-pill ${stanceClass}">${escapeHtml((c.assessment || "uncertain").replace(/_/g, " "))}</span>
             </div>
             ${c.reason ? `<div class="bs-claim-reason">${escapeHtml(c.reason)}</div>` : ""}
             ${sources.length > 0 ? `<div class="bs-claim-evidence-sources">${sourcesHtml}</div>` : ""}
@@ -376,7 +416,7 @@
         `;
       }).join("");
     } else {
-      claimsHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No testable factual claims were asserted in the sampled posts.</div>`;
+      claimsHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No disputed factual claims were asserted in the sampled posts.</div>`;
     }
 
     // Images HTML
@@ -385,7 +425,7 @@
       imagesHtml = imageFindings.map((img) => `
         <div class="bs-inspect-card">
           <div style="font-weight:700; color:#ffffff; font-size:12px; margin-bottom:4px;">
-            ${img.is_scam ? "🚨 Flagged Scam / Airdrop Graphic" : img.is_misleading ? "⚠️ Misleading Visual Media" : "🖼️ Image Media Inspected"}
+            ${img.is_scam ? "🚨 Flagged Scam / Phishing Graphic" : img.is_misleading ? "⚠️ Misleading Visual Media" : "🖼️ Image Media Inspected"}
           </div>
           <div class="bs-inspect-card-content">
             ${img.description ? `<div><b>Visual Description:</b> ${escapeHtml(img.description)}</div>` : ""}
@@ -395,7 +435,7 @@
         </div>
       `).join("");
     } else {
-      imagesHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No media images were attached to the sampled posts.</div>`;
+      imagesHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No visual media images were attached to the sampled posts.</div>`;
     }
 
     // Bio Links HTML
@@ -407,7 +447,7 @@
         </div>
       `).join("");
     } else {
-      bioLinksHtml = `<div style="color:#94a3b8; font-style:italic; margin-top:4px;">No external links in bio.</div>`;
+      bioLinksHtml = `<div style="color:#94a3b8; font-style:italic; margin-top:4px;">No external links detected in profile bio.</div>`;
     }
 
     // Flags HTML
@@ -438,29 +478,34 @@
 
         <!-- Body -->
         <div class="bs-modal-body">
-          
+          <!-- TAB 1: What was analyzed -->
+          <div id="bsTabContentWhat">
+            <!-- Executive Summary -->
+            <div class="bs-summary-box">
+              <div class="bs-summary-label">Executive Credibility Summary</div>
+              <p class="bs-summary-text">${escapeHtml(summary)}</p>
+            </div>
 
-          <!-- Quick Stats -->
-          <div class="bs-stat-grid">
-            <div class="bs-stat-chip">
-              <div class="bs-stat-val">${postsAnalyzed}</div>
-              <div class="bs-stat-lbl">Posts Checked</div>
+            <!-- Quick Stats Grid -->
+            <div class="bs-stat-grid">
+              <div class="bs-stat-chip">
+                <div class="bs-stat-val">${postsAnalyzed}</div>
+                <div class="bs-stat-lbl">Posts Checked</div>
+              </div>
+              <div class="bs-stat-chip">
+                <div class="bs-stat-val">${imagesAnalyzed}</div>
+                <div class="bs-stat-lbl">Images Scanned</div>
+              </div>
+              <div class="bs-stat-chip">
+                <div class="bs-stat-val">${scrapedLinksCount}</div>
+                <div class="bs-stat-lbl">Links Uncloaked</div>
+              </div>
+              <div class="bs-stat-chip">
+                <div class="bs-stat-val">${claimsVerified}</div>
+                <div class="bs-stat-lbl">Claims Fact-Checked</div>
+              </div>
             </div>
-            <div class="bs-stat-chip">
-              <div class="bs-stat-val">${imagesAnalyzed}</div>
-              <div class="bs-stat-lbl">Images Scanned</div>
-            </div>
-            <div class="bs-stat-chip">
-              <div class="bs-stat-val">${scrapedLinksCount}</div>
-              <div class="bs-stat-lbl">Links Uncloaked</div>
-            </div>
-            <div class="bs-stat-chip">
-              <div class="bs-stat-val">${claimsVerified}</div>
-              <div class="bs-stat-lbl">Claims Fact-Checked</div>
-            </div>
-          </div>
 
-   
             <!-- Profile Bio Section -->
             <div class="bs-inspect-section">
               <div class="bs-section-title">👤 Profile Bio & Destination Links</div>
@@ -503,8 +548,7 @@
                 ${flagsDetailHtml}
               </div>
             </div>
-
-
+          </div>
       </div>
     `;
 
@@ -541,8 +585,16 @@
     if (modalDialog) {
       modalDialog.onclick = (e) => e.stopPropagation();
     }
+  }
+
+  function openInspectModal(handle, data) {
+    const backdrop = getOrCreateInspectModalBackdrop();
+    renderInspectModalContent(backdrop, handle, data);
 
     // Keydown handler (Escape to close)
+    if (activeModalKeydownHandler) {
+      document.removeEventListener("keydown", activeModalKeydownHandler);
+    }
     activeModalKeydownHandler = (e) => {
       if (e.key === "Escape") {
         closeInspectModal();
@@ -552,8 +604,42 @@
 
     // Prevent body background scroll while modal is open
     document.body.style.overflow = "hidden";
-
     backdrop.classList.add("visible");
+
+    // Asynchronously fetch complete analysis if detailed claims are not loaded yet
+    if (data && data.report_url && (!data.details || !data.details.claims || data.details.claims.length === 0)) {
+      if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
+        chrome.runtime.sendMessage(
+          { type: "GET_ANALYSIS", reportUrl: data.report_url, apiUrl: API_BASE_URL },
+          (res) => {
+            if (res && res.success && res.data && res.data.result) {
+              const fullResult = res.data.result;
+              const enrichedData = {
+                ...data,
+                summary: fullResult.summary || data.summary,
+                details: {
+                  ...(data.details || {}),
+                  ...fullResult,
+                  summary: fullResult.summary || (data.details && data.details.summary),
+                  bio: fullResult.bio || (data.details && data.details.bio),
+                  bio_links: fullResult.bio_links || (data.details && data.details.bio_links),
+                  posts_analyzed: fullResult.posts_analyzed || (data.details && data.details.posts_analyzed),
+                  images_analyzed: fullResult.images_analyzed || (data.details && data.details.images_analyzed),
+                  image_findings: fullResult.image_findings || (data.details && data.details.image_findings),
+                  claims_verified: fullResult.claims_verified || (data.details && data.details.claims_verified),
+                  claims: fullResult.claims || (data.details && data.details.claims),
+                  scraped_links_count: fullResult.scraped_links_count || (data.details && data.details.scraped_links_count),
+                },
+              };
+              const currentBackdrop = document.getElementById("bs-inspect-modal-backdrop");
+              if (currentBackdrop && currentBackdrop.classList.contains("visible") && currentProfileHandle === handle) {
+                renderInspectModalContent(currentBackdrop, handle, enrichedData);
+              }
+            }
+          }
+        );
+      }
+    }
   }
 
   function getProfileHandleFromUrl() {

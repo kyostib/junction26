@@ -312,3 +312,84 @@ async def test_image_analysis_claim_and_scam_detection():
     # Image 2 is identified as a scam banner
     assert analyses[1]["is_scam"] is True
     assert any("pre-sale" in f.lower() or "airdrop" in f.lower() for f in analyses[1]["flags"])
+
+
+@pytest.mark.asyncio
+async def test_overlay_legacy_cache_invalidation_and_rich_details():
+    from datetime import datetime, timezone
+    from fastapi import BackgroundTasks
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.api.overlay import batch_twitter_overlay
+    from app.db.database import Base
+    from app.db.models import Analysis, Profile
+    from app.schemas.analysis import OverlayBatchRequest
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        # Case 1: Profile with a modern completed analysis containing posts_analyzed
+        p1 = Profile(platform="twitter", username="modernuser", profile_url="https://x.com/modernuser")
+        session.add(p1)
+        await session.flush()
+
+        completed_at = datetime.now(timezone.utc)
+        a1 = Analysis(
+            profile_id=p1.id,
+            status="completed",
+            overall_score=42.0,
+            badge_level="medium",
+            completed_at=completed_at,
+            result={
+                "bs_index": 42.0,
+                "summary": "Modern test summary",
+                "posts_analyzed": 8,
+                "bio": "Crypto researcher & dev",
+                "bio_links": ["https://example.org/project"],
+                "images_analyzed": 1,
+                "image_findings": [{"url": "https://pbs.twimg.com/media/sample.jpg", "description": "Chart"}],
+                "claims": [{"claim": "Test claim", "assessment": "supported"}],
+                "top_flags": [],
+            },
+        )
+        session.add(a1)
+
+        # Case 2: Profile with legacy analysis lacking posts_analyzed
+        p2 = Profile(platform="twitter", username="legacyuser", profile_url="https://x.com/legacyuser")
+        session.add(p2)
+        await session.flush()
+
+        a2 = Analysis(
+            profile_id=p2.id,
+            status="completed",
+            overall_score=15.0,
+            completed_at=completed_at,
+            result={"dimensions": {}, "summary": "Old summary", "top_flags": []},  # lacks posts_analyzed
+        )
+        session.add(a2)
+        await session.commit()
+
+    async with session_factory() as session:
+        tasks = BackgroundTasks()
+        payload = OverlayBatchRequest(usernames=["modernuser", "legacyuser"])
+        resp = await batch_twitter_overlay(payload, tasks, session)
+
+        # Modern user should be ready with full details
+        modern = resp.results["modernuser"]
+        assert modern.status == "ready"
+        assert modern.bs_index == 42.0
+        assert modern.summary == "Modern test summary"
+        assert modern.details is not None
+        assert modern.details["posts_analyzed"] == 8
+        assert modern.details["bio"] == "Crypto researcher & dev"
+        assert len(modern.details["claims"]) == 1
+
+        # Legacy user should have been invalidated and re-queued
+        legacy = resp.results["legacyuser"]
+        assert legacy.status == "queued"
+
+    await engine.dispose()
+

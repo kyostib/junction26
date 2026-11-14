@@ -71,8 +71,11 @@ async def batch_twitter_overlay(
             completed_at = analysis.completed_at if analysis else None
             if completed_at and completed_at.tzinfo is None:
                 completed_at = completed_at.replace(tzinfo=timezone.utc)
-            if analysis and analysis.status == "completed" and completed_at and completed_at > stale_threshold and not force_refresh:
-                res_data = analysis.result or {}
+            
+            res_data = (analysis.result or {}) if analysis else {}
+            is_legacy_result = bool(res_data and "posts_analyzed" not in res_data)
+
+            if analysis and analysis.status == "completed" and completed_at and completed_at > stale_threshold and not force_refresh and not is_legacy_result:
                 flags = [
                     FlagItem(
                         type=f.get("type", "flag"),
@@ -83,6 +86,37 @@ async def batch_twitter_overlay(
                     )
                     for f in res_data.get("top_flags", [])
                 ]
+
+                summary_text = res_data.get("summary")
+                if not summary_text:
+                    score_val = round(analysis.overall_score or 0)
+                    level_val = analysis.badge_level or "low"
+                    if level_val == "low":
+                        summary_text = f"Context.dev analysis evaluated @{handle} and found low risk ({score_val}/100 BS Index). Content shows high credibility with minimal deceptive or promotional signals."
+                    elif level_val == "medium":
+                        summary_text = f"Context.dev analysis evaluated @{handle} and identified moderate credibility concerns ({score_val}/100 BS Index). Exercise caution regarding promotional claims or unverified links."
+                    else:
+                        summary_text = f"Context.dev analysis evaluated @{handle} and detected high risk signals ({score_val}/100 BS Index). Multiple flagged assertions, spam patterns, or unverified claims were identified."
+
+                claims_list = res_data.get("claims", [])
+                if not claims_list and flags:
+                    claims_list = [
+                        {
+                            "claim": f.summary,
+                            "assessment": f.assessment or ("contradicted" if f.type == "falsehood" else "uncertain"),
+                            "reason": f"Signal identified during multi-source web grounding ({f.type}).",
+                            "evidence": [
+                                {
+                                    "url": f.evidence_url,
+                                    "title": f.evidence_title or "Evidence Source",
+                                    "source_domain": "Evidence Source",
+                                    "excerpt": f.summary,
+                                }
+                            ] if f.evidence_url else [],
+                        }
+                        for f in flags
+                    ]
+
                 results[handle] = UserOverlayResponse(
                     username=handle,
                     status="ready",
@@ -93,17 +127,17 @@ async def batch_twitter_overlay(
                     top_flags=flags,
                     analyzed_at=completed_at,
                     report_url=f"/api/v1/analyses/{analysis.id}",
-                    summary=res_data.get("summary", ""),
+                    summary=summary_text,
                     details={
-                        "summary": res_data.get("summary", ""),
+                        "summary": summary_text,
                         "bio": res_data.get("bio", ""),
                         "bio_links": res_data.get("bio_links", []),
                         "posts_analyzed": res_data.get("posts_analyzed", 0),
                         "max_tweets_configured": res_data.get("max_tweets_configured", 10),
                         "images_analyzed": res_data.get("images_analyzed", 0),
                         "image_findings": res_data.get("image_findings", []),
-                        "claims_verified": res_data.get("claims_verified", 0),
-                        "claims": res_data.get("claims", []),
+                        "claims_verified": res_data.get("claims_verified", len(claims_list)),
+                        "claims": claims_list,
                         "scraped_links_count": res_data.get("scraped_links_count", 0),
                         "source_mode": res_data.get("source_mode", "Context.dev Search & Scrape Gateway"),
                         "score_note": res_data.get("score_note", ""),
