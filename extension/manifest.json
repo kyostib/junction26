@@ -1,19 +1,23 @@
 {
   "manifest_version": 3,
   "name": "BS Meter - Twitter Evidence Overlay",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Displays live BS Index scores, falsehood flags, and spam detection powered by Context.dev next to Twitter/X users.",
   "permissions": [
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "*://x.com/*",
     "*://*.x.com/*",
     "*://twitter.com/*",
     "*://*.twitter.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
     "http://*/*",
-    "https://*/*",
-    "<all_urls>"
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

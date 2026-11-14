@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_provider: str = "mock"
     max_claims_to_verify: int = 5
-    allowed_origins: list[str] = ["*"]
+    # Web origins are opt-in. The browser extension uses its service worker and
+    # therefore does not need a permissive CORS policy.
+    allowed_origins: list[str] = []
 
     @property
     def is_dev(self) -> bool:

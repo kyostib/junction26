@@ -37,12 +37,18 @@
         return resolve();
       }
 
+      // Clean up legacy keys from earlier dev builds
+      chrome.storage.local.remove(["envMode", "devApiUrl", "prodApiUrl"]).catch(() => {});
+      if (chrome.storage.sync) {
+        chrome.storage.sync.remove(["envMode", "devApiUrl", "prodApiUrl"]).catch(() => {});
+      }
+
       chrome.storage.local.get(["apiBaseUrl", "enabled"], (local) => {
         if (local && local.apiBaseUrl) {
           API_BASE_URL = local.apiBaseUrl.replace(/\/+$/, "");
           if (typeof local.enabled === "boolean") enabled = local.enabled;
           isConfigLoaded = true;
-          console.info(`[BS Meter] Config loaded from local storage: API = ${API_BASE_URL}`);
+          console.info(`%c[BS Meter] Active API Address: ${API_BASE_URL}`, "color: #38bdf8; font-weight: bold;");
           return resolve();
         }
 
@@ -54,7 +60,7 @@
               if (typeof sync.enabled === "boolean") enabled = sync.enabled;
             }
             isConfigLoaded = true;
-            console.info(`[BS Meter] Config loaded from sync storage: API = ${API_BASE_URL || "(none)"}`);
+            console.info(`%c[BS Meter] Active API Address: ${API_BASE_URL || "(none configured)"}`, "color: #38bdf8; font-weight: bold;");
             resolve();
           });
         } else {
@@ -69,13 +75,12 @@
   if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg) => {
       if (msg && msg.type === "CONFIG_UPDATED") {
-        if (msg.apiBaseUrl) API_BASE_URL = msg.apiBaseUrl.replace(/\/+$/, "");
+        if (msg.apiBaseUrl !== undefined) API_BASE_URL = (msg.apiBaseUrl || "").replace(/\/+$/, "");
         if (typeof msg.enabled === "boolean") enabled = msg.enabled;
-        console.info(`[BS Meter] Real-time config update applied: API = ${API_BASE_URL}, Enabled = ${enabled}`);
-        if (!enabled) {
-          removeExistingBadges();
-          hideOverlay(true);
-        } else {
+        console.info(`%c[BS Meter] Real-time config applied: API = ${API_BASE_URL || "(none)"}`, "color: #10b981; font-weight: bold;");
+        currentProfileHandle = null;
+        removeExistingBadges();
+        if (enabled && API_BASE_URL) {
           checkCurrentPage();
         }
       }
@@ -87,20 +92,20 @@
     chrome.storage.onChanged.addListener((changes) => {
       let updated = false;
       if (changes.apiBaseUrl) {
-        API_BASE_URL = changes.apiBaseUrl.newValue.replace(/\/+$/, "");
+        API_BASE_URL = (changes.apiBaseUrl.newValue || "").replace(/\/+$/, "");
         updated = true;
       }
       if (changes.enabled) {
         enabled = changes.enabled.newValue;
         updated = true;
-        if (!enabled) {
-          removeExistingBadges();
-          hideOverlay(true);
-        }
       }
-      if (updated && enabled) {
-        console.info(`[BS Meter] Storage changed: API = ${API_BASE_URL}`);
-        checkCurrentPage();
+      if (updated) {
+        console.info(`%c[BS Meter] Storage updated: API = ${API_BASE_URL}`, "color: #10b981; font-weight: bold;");
+        currentProfileHandle = null;
+        removeExistingBadges();
+        if (enabled && API_BASE_URL) {
+          checkCurrentPage();
+        }
       }
     });
   }
@@ -156,6 +161,28 @@
     overlay.style.left = `${Math.round(left)}px`;
   }
 
+  // All report fields originate outside the extension (posts, model output,
+  // and web-search results). Never interpolate them into HTML unescaped.
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+    })[char]);
+  }
+
+  function safeHttpUrl(value) {
+    try {
+      const url = new URL(value);
+      return (url.protocol === "https:" || url.protocol === "http:") ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function safePercent(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : 0;
+  }
+
   function showOverlay(badge, handle, data) {
     if (hideOverlayTimeout) {
       clearTimeout(hideOverlayTimeout);
@@ -169,9 +196,9 @@
 
     if (status === "ready" && data) {
       const dims = data.dimensions || {};
-      const falsehood = dims.falsehood || 0;
-      const spam = dims.spam || 0;
-      const harm = dims.harm || 0;
+      const falsehood = safePercent(dims.falsehood);
+      const spam = safePercent(dims.spam);
+      const harm = safePercent(dims.harm);
 
       let flagsHtml = "";
       if (data.top_flags && data.top_flags.length > 0) {
@@ -183,8 +210,8 @@
               .map(
                 (f) => `
                 <div class="bs-flag-item">
-                  • <b>${(f.type || "SIGNAL").toUpperCase()}:</b> ${f.summary}
-                  ${f.evidence_url ? `<a href="${f.evidence_url}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Source: ${f.evidence_title || "Context.dev Evidence"}</a>` : ""}
+                  • <b>${escapeHtml((f.type || "SIGNAL").toUpperCase())}:</b> ${escapeHtml(f.summary)}
+                  ${safeHttpUrl(f.evidence_url) ? `<a href="${escapeHtml(safeHttpUrl(f.evidence_url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Source: ${escapeHtml(f.evidence_title || "Context.dev Evidence")}</a>` : ""}
                 </div>`
               )
               .join("")}
@@ -194,12 +221,11 @@
 
       overlay.innerHTML = `
         <div class="bs-popover-header">
-          <span class="bs-popover-title">@${handle} - Evidence Report</span>
+          <span class="bs-popover-title">@${escapeHtml(handle)} - Evidence Report</span>
           <div style="display:flex; align-items:center;">
             <span class="bs-popover-score" style="color: ${level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : "#f87171"}">
               BS: ${score}/100
             </span>
-            <button class="bs-close-btn" id="bsOverlayClose">✕</button>
           </div>
         </div>
         <div>
@@ -218,10 +244,9 @@
     } else {
       overlay.innerHTML = `
         <div class="bs-popover-header">
-          <span class="bs-popover-title">@${handle}</span>
+          <span class="bs-popover-title">@${escapeHtml(handle)}</span>
           <div style="display:flex; align-items:center;">
             <span class="bs-popover-score" style="color:#9ca3af;">Analyzing...</span>
-            <button class="bs-close-btn" id="bsOverlayClose">✕</button>
           </div>
         </div>
         <div style="font-size:11px; color:#9ca3af; line-height:1.45;">

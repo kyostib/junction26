@@ -37,12 +37,10 @@ app = FastAPI(
 # Enable CORS for Chrome Extension overlays (chrome-extension://*), x.com, and web clients
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_private_network=True,
-    expose_headers=["Access-Control-Allow-Private-Network"],
 )
 
 app.include_router(analysis_router)

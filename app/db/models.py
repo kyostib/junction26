@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -76,6 +76,17 @@ class Evidence(Base):
 
 class Analysis(Base):
     __tablename__ = "analyses"
+    __table_args__ = (
+        # Prevent duplicate workers from being queued for one profile. Partial
+        # indexes are supported by both PostgreSQL and SQLite.
+        Index(
+            "uq_active_analysis_per_profile",
+            "profile_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     profile_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String(20), default="queued")

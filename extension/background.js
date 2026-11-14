@@ -9,21 +9,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request && request.type === "BATCH_LOOKUP") {
     (async () => {
       try {
-        let apiUrl = (request.apiUrl || "").trim();
+        // ALWAYS check storage first so user's configured URL takes precedence
+        const local = await chrome.storage.local.get(["apiBaseUrl"]);
+        let apiUrl = (local && local.apiBaseUrl ? local.apiBaseUrl : "").trim();
 
-        // If not passed in message, check storage
-        if (!apiUrl) {
-          const local = await chrome.storage.local.get(["apiBaseUrl"]);
-          if (local && local.apiBaseUrl) {
-            apiUrl = local.apiBaseUrl;
-          } else if (chrome.storage.sync) {
-            const sync = await chrome.storage.sync.get(["apiBaseUrl"]);
-            if (sync && sync.apiBaseUrl) apiUrl = sync.apiBaseUrl;
-          }
+        if (!apiUrl && chrome.storage.sync) {
+          const sync = await chrome.storage.sync.get(["apiBaseUrl"]).catch(() => ({}));
+          if (sync && sync.apiBaseUrl) apiUrl = sync.apiBaseUrl.trim();
         }
 
-        apiUrl = (apiUrl || "http://localhost:8000").replace(/\/+$/, "");
-        console.log("[BS Meter Background] Proxying batch evaluation for:", request.usernames, "to", apiUrl);
+        // Fallback to request parameter only if storage is completely empty
+        if (!apiUrl) {
+          apiUrl = (request.apiUrl || "").trim();
+        }
+
+        apiUrl = apiUrl.replace(/\/+$/, "");
+
+        console.log(`[BS Meter Background] Target API URL: "${apiUrl}" for handles:`, request.usernames);
+
+        if (!apiUrl) {
+          sendResponse({
+            success: false,
+            error: "API address not configured. Please click the BS Meter extension icon and enter your API URL."
+          });
+          return;
+        }
 
         const response = await fetch(`${apiUrl}/api/v1/overlay/twitter/batch`, {
           method: "POST",

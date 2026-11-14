@@ -40,10 +40,17 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         profile_data = await social.fetch_profile(profile.profile_url)
         posts = await social.fetch_posts(profile_data)
 
-        # Persist posts
+        # Persist only posts that are not already retained for this profile.
+        # Reanalyses should not grow the database with identical scraped data.
+        from sqlalchemy import select
+        existing_post_ids = set(
+            (await session.execute(select(Post.platform_post_id).where(Post.profile_id == profile.id))).scalars()
+        )
         persisted_posts = []
         all_links = set()
         for item in posts:
+            if item.platform_post_id in existing_post_ids:
+                continue
             post = Post(
                 profile_id=profile.id,
                 platform_post_id=item.platform_post_id,
