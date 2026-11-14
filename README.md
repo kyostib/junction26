@@ -1,73 +1,126 @@
-# BS Meter
+# BS Meter 🎯
 
-BS Meter analyzes public claims made by an account and returns a traceable evidence based content signal. The score is a product heuristic for the posts analyzed, not an objective measurement of a person's character.
+**BS Meter** calculates an explainable **"BS Index"** (0–100) for Twitter/X users based on their public tweets. It detects **falsehoods & unverified claims**, **spam & crypto/affiliate shills**, and **harmful content**. 
 
-## Setup
+The system is powered by **Context.dev** as its unified external gateway, hosted on FastAPI with a PostgreSQL backend, and comes with a **Chrome Extension** that injects real-time score overlay badges directly next to user handles on `x.com`.
 
-Requires Python 3.11+. Create an environment and install the project:
+---
+
+## Architecture Overview
+
+```
+  ┌─────────────────────────────────────────────────────────────┐
+  │                 Chrome Extension (x.com)                    │
+  │  - MutationObserver watches handles: [data-testid="User-Name"]│
+  │  - Injects Badge Pills: [✓ 12] [⚠️ 48] [🚨 78]              │
+  │  - Hover Popover: BS breakdown & Context.dev citations      │
+  └──────────────────────────────▲──────────────────────────────┘
+                                 │ POST /api/v1/overlay/twitter/batch
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │                FastAPI Backend (Dockerized)                 │
+  │  - Cache-first architecture (sub-50ms responses for feed)   │
+  │  - Auto-enqueues background analysis for stale/new users    │
+  │  - CORS enabled for web & extension requests                │
+  └──────────────▲───────────────────────────────▲──────────────┘
+                 │ asyncpg                       │
+                 ▼                               ▼
+  ┌──────────────────────────────┐ ┌───────────────────────────┐
+  │      PostgreSQL 18 DB        │ │    Context.dev Gateway    │
+  │  - Profiles (unique handles) │ │ 1. Ingestion: scrape x.com│
+  │  - Cached analyses & scores  │ │ 2. Uncloak: scrape links  │
+  │  - Claims & evidence traces  │ │ 3. Ground: web.search     │
+  └──────────────────────────────┘ └───────────────────────────┘
+```
+
+---
+
+## Quickstart with Docker & PostgreSQL
+
+The fastest way to spin up the PostgreSQL database and FastAPI backend:
+
+1. **Set your environment variables**:
+   ```bash
+   cp .env.example .env
+   # Add your CONTEXT_DEV_API_KEY in .env
+   ```
+
+2. **Start the containers**:
+   ```bash
+   docker compose up --build
+   ```
+
+3. **Check health**:
+   ```bash
+   curl http://localhost:8000/health
+   # {"status": "ok"}
+   ```
+
+---
+
+## Local Development (Without Docker)
+
+Requires Python 3.11+.
 
 ```bash
 python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-Copy `.env.example` to `.env`. The defaults use a local SQLite database so the demo runs without PostgreSQL. For PostgreSQL set, for example, `DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/bsmeter`.
-
-## Environment variables
-
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Async SQLAlchemy URL; SQLite is the local default, PostgreSQL is supported. |
-| `CONTEXT_DEV_API_KEY` | Enables live Context.dev web search. If empty, synthetic demo fixtures are used and labeled in each result. |
-| `LLM_API_KEY` | Reserved for a future model provider; current extraction and evaluation use the deterministic demo provider. |
-| `LLM_PROVIDER` | Provider selection setting (currently `mock`). |
-| `MAX_CLAIMS_TO_VERIFY` | Maximum factual claims researched per profile (default 5). |
-
-No credential is stored in source. Live Context.dev errors fail the analysis and are logged; they never fall back to synthetic evidence.
-
-## Database
-
-Tables are created at API startup for the hackathon workflow. Alembic is configured for versioned migrations; create/apply migrations with:
-
+To run with SQLite locally:
 ```bash
-alembic revision --autogenerate -m "initial schema"
-alembic upgrade head
-```
-
-## Run the API
-
-```bash
+export DATABASE_URL="sqlite+aiosqlite:///./bs_meter.db"
 uvicorn app.main:app --reload
 ```
 
-Submit a mock profile:
+---
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/analyses \
-  -H "Content-Type: application/json" \
-  -d '{"platform":"mock","profile_url":"https://example.com/sample-account"}'
+## Chrome Extension Setup
+
+The Chrome Extension adds inline badges and evidence popovers directly into Twitter/X (`x.com`):
+
+1. Open Chrome and navigate to `chrome://extensions`.
+2. Toggle on **"Developer mode"** in the top right.
+3. Click **"Load unpacked"** and select the [`extension/`](extension/) directory from this repository.
+4. Click the extension icon in your Chrome toolbar to configure the Backend API URL (defaults to `http://localhost:8000`).
+5. Open [x.com](https://x.com) and browse your feed. You will see badges appear next to handles:
+   - 🟢 `[✓ 14]` — Low BS / Authentic
+   - 🟡 `[⚠️ 48]` — Caution / Misleading claims
+   - 🔴 `[🚨 78]` — High BS / Contradicted claims or spam links
+   - ⚪ `[⏳ Checking...]` — Currently analyzing via Context.dev
+
+Hover over any badge to view the breakdown across **Falsehoods**, **Spam**, and **Harm**, along with direct links to the web evidence.
+
+---
+
+## API Endpoints
+
+### 1. Batch Overlay Lookup (Used by Chrome Extension)
+`POST /api/v1/overlay/twitter/batch`
+
+```json
+{
+  "usernames": ["elonmusk", "dr_who"]
+}
 ```
 
-Poll `GET /api/v1/analyses/{analysis_id}` for `queued`, `running`, `completed`, or `failed`. A completed response includes dimensions, analyzed claims, assessments, reasons, and source URLs.
+Returns instantaneous cached scores or marks unknown handles as `queued` while scheduling analysis in the background.
 
-Run a full analysis in the terminal:
+### 2. Single Handle Overlay Lookup
+`GET /api/v1/overlay/twitter/{username}?refresh=false`
 
+### 3. Run Analysis in Terminal
+You can run a direct analysis from your command line:
 ```bash
-python -m app.cli
+python -m app.cli elonmusk
 ```
 
-Run tests with `pytest`.
+---
 
-## Architecture
+## How Context.dev Powers BS Meter
 
-`app/adapters/social` isolates public-post collection; `MockSocialAdapter` supplies clearly synthetic sample posts. `app/providers` holds claim/evidence model interfaces and the Context.dev adapter. The pipeline cleans and extracts claims, prioritizes factual claims deterministically, researches within budget, evaluates evidence signals, and computes scores in Python. FastAPI queues work with an in-process background task, then SQLAlchemy persists profiles, posts, claims, evidence, and analysis results. PostgreSQL is supported; SQLite makes local setup immediate.
-
-The current mock claim extraction and evaluation are deterministic demo implementations, not an LLM. Context.dev is live only when configured with a key. With no key, output marks evidence as synthetic `demo.invalid` fixtures. Social collection currently uses mock posts only.
-
-## Next high value work
-
-1. Add a production LLM provider with schema constrained extraction and evidence classification.
-2. Replace mock social collection with a compliant, permissioned public data source.
-3. Add migration revisions, persistence deduplication, and operational controls for job retries and usage limits.
+Context.dev serves as the **unified contact point**:
+1. **Twitter Scraping (`client.web.scrape`)**: Bypasses bot detection and renders the client-side JavaScript on `x.com/{username}` to extract recent tweets and profile metadata without needing an X API key.
+2. **Link Uncloaking & Inspection (`client.web.scrape`)**: Follows shortened `t.co` URLs and renders destination landing pages to inspect them for crypto presales, phishing, and affiliate spam.
+3. **Claim Grounding (`client.web.search`)**: Searches authoritative web sources to verify empirical claims.

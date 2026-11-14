@@ -5,19 +5,56 @@ def prioritize(claims, limit: int):
     return sorted((c for c in claims if c.claim_type.value == "factual"), key=lambda c: c.importance, reverse=True)[:limit]
 
 
-def claim_score(e: EvidenceEvaluation) -> float:
-    return max(-1.0, min(1.0, .60 * e.accuracy + .20 * e.evidence_quality - .10 * e.misleadingness - .10 * e.sensationalism))
+def compute_badge(bs_index: float) -> tuple[str, str]:
+    """Returns (badge_level, badge_label) based on the 0-100 BS Index."""
+    score = round(bs_index)
+    if score <= 30:
+        return "low", f"[✓ {score}]"
+    if score <= 60:
+        return "medium", f"[⚠️ {score}]"
+    return "high", f"[🚨 {score}]"
 
 
-def aggregate(evaluations: list[tuple[float, EvidenceEvaluation]]) -> dict:
-    if not evaluations:
-        return {"overall_score": 0.0, "dimensions": {"factuality": 0, "evidence": 0, "sensationalism": 0, "misleadingness": 0, "correction": 0}}
-    total = sum(max(.05, importance) for importance, _ in evaluations)
-    avg = lambda f: sum(max(.05, i) * f(e) for i, e in evaluations) / total
-    norm = lambda v: round(max(-10, min(10, 10 * v)), 1)
-    return {"overall_score": norm(avg(claim_score)), "dimensions": {
-        "factuality": norm(avg(lambda e: e.accuracy)),
-        "evidence": round(avg(lambda e: e.evidence_quality) * 10, 1),
-        "sensationalism": round(avg(lambda e: e.sensationalism) * 10, 1),
-        "misleadingness": round(avg(lambda e: e.misleadingness) * 10, 1),
-        "correction": 0.0}}
+def aggregate(
+    evaluations: list[tuple[float, EvidenceEvaluation]],
+    spam_score: float = 0.0,
+    harm_score: float = 0.0,
+) -> dict:
+    """Aggregates factuality evaluations, spam signals, and harm metrics into a unified BS Index (0-100)."""
+    if evaluations:
+        total_weight = sum(max(0.05, importance) for importance, _ in evaluations)
+        avg_accuracy = sum(max(0.05, i) * e.accuracy for i, e in evaluations) / total_weight
+        avg_quality = sum(max(0.05, i) * e.evidence_quality for i, e in evaluations) / total_weight
+        avg_misleading = sum(max(0.05, i) * e.misleadingness for i, e in evaluations) / total_weight
+        avg_sensational = sum(max(0.05, i) * e.sensationalism for i, e in evaluations) / total_weight
+    else:
+        avg_accuracy = 0.0
+        avg_quality = 0.0
+        avg_misleading = 0.0
+        avg_sensational = 0.0
+
+    # Falsehood score: accuracy is -1.0 (false) to 1.0 (true) -> maps to 100 (false) to 0 (true)
+    falsehood_score = round(max(0.0, min(100.0, (1.0 - avg_accuracy) * 50.0)), 1)
+    spam_score = round(max(0.0, min(100.0, spam_score)), 1)
+    harm_score = round(max(0.0, min(100.0, harm_score)), 1)
+
+    # Composite BS Index (0 = cleanest/most truthful, 100 = severe falsehood/spam/harm)
+    # Weights: 45% Falsehood, 35% Spam, 20% Harm
+    bs_index = round(0.45 * falsehood_score + 0.35 * spam_score + 0.20 * harm_score, 1)
+    badge_level, badge_label = compute_badge(bs_index)
+
+    return {
+        "bs_index": bs_index,
+        "overall_score": bs_index,  # For backward-compatibility with existing consumers
+        "badge_level": badge_level,
+        "badge_label": badge_label,
+        "dimensions": {
+            "falsehood": falsehood_score,
+            "spam": spam_score,
+            "harm": harm_score,
+            "factuality_accuracy": round(avg_accuracy, 2),
+            "evidence_quality": round(avg_quality * 10, 1),
+            "sensationalism": round(avg_sensational * 10, 1),
+            "misleadingness": round(avg_misleading * 10, 1),
+        },
+    }

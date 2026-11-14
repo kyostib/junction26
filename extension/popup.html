@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BS Meter Settings</title>
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0f141c;
+      color: #f3f4f6;
+    }
+    h2 {
+      font-size: 15px;
+      margin: 0 0 12px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9ca3af;
+      display: inline-block;
+    }
+    .status-dot.online { background: #10b981; }
+    .status-dot.offline { background: #ef4444; }
+    label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #9ca3af;
+      display: block;
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      background: #1a2230;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      font-size: 12px;
+    }
+    button {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: #2563eb;
+      color: #fff;
+      transition: background 0.15s;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    .footer {
+      font-size: 10px;
+      color: #6b7280;
+      text-align: center;
+      margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h2>
+    <span class="status-dot" id="statusDot"></span>
+    BS Meter Configuration
+  </h2>
+
+  <div class="toggle-row">
+    <span>Enable Overlay</span>
+    <input type="checkbox" id="enabledCheckbox" checked>
+  </div>
+
+  <label for="apiUrl">Backend API URL</label>
+  <input type="text" id="apiUrl" value="http://localhost:8000" placeholder="http://localhost:8000">
+
+  <button id="saveBtn">Save & Test Connection</button>
+
+  <div class="footer">Powered by <b>Context.dev</b></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

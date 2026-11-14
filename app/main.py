@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.analysis import router
+from app.api.analysis import router as analysis_router
+from app.api.overlay import router as overlay_router
 from app.core.logging import configure_logging
 from app.db.database import Base, engine
 from app.db import models  # noqa: F401
@@ -18,8 +20,23 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="BS Meter API", description="Evidence signals for public claims, not a judgment of a person.", lifespan=lifespan)
-app.include_router(router)
+app = FastAPI(
+    title="BS Meter API",
+    description="Explainable evidence signals, spam detection, and factuality scores powered by Context.dev.",
+    lifespan=lifespan,
+)
+
+# Enable CORS for Chrome Extension overlays & web clients
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(analysis_router)
+app.include_router(overlay_router)
 
 
 @app.get("/health")

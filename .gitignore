@@ -1,3 +1,27 @@
-bs_meter.db
-bs_meter.egg-info/
-app/__pycache__/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local environment variables
+.env
+
+# macOS & Editors
+.DS_Store
+.vscode/
+.idea/
