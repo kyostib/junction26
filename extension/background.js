@@ -1,5 +1,8 @@
 // BS Meter - Background Service Worker (Manifest V3)
-console.log("%c[BS Meter Background] Service worker active.", "color: #38bdf8; font-weight: bold;");
+console.log(
+  "%c[BS Meter Background] Service worker active.",
+  "color: #38bdf8; font-weight: bold;",
+);
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[BS Meter Background] Extension installed / updated.");
@@ -14,7 +17,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         let apiUrl = (local && local.apiBaseUrl ? local.apiBaseUrl : "").trim();
 
         if (!apiUrl && chrome.storage.sync) {
-          const sync = await chrome.storage.sync.get(["apiBaseUrl"]).catch(() => ({}));
+          const sync = await chrome.storage.sync
+            .get(["apiBaseUrl"])
+            .catch(() => ({}));
           if (sync && sync.apiBaseUrl) apiUrl = sync.apiBaseUrl.trim();
         }
 
@@ -25,12 +30,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         apiUrl = apiUrl.replace(/\/+$/, "");
 
-        console.log(`[BS Meter Background] Target API URL: "${apiUrl}" for handles:`, request.usernames);
+        console.log(
+          `[BS Meter Background] Target API URL: "${apiUrl}" for handles:`,
+          request.usernames,
+        );
 
         if (!apiUrl) {
           sendResponse({
             success: false,
-            error: "API address not configured. Please click the BS Meter extension icon and enter your API URL."
+            error:
+              "API address not configured. Please click the BS Meter extension icon and enter your API URL.",
           });
           return;
         }
@@ -43,16 +52,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         if (!response.ok) {
           const errText = await response.text();
-          console.warn("[BS Meter Background] API HTTP error:", response.status, errText);
-          sendResponse({ success: false, status: response.status, error: errText });
+          console.warn(
+            "[BS Meter Background] API HTTP error:",
+            response.status,
+            errText,
+          );
+          sendResponse({
+            success: false,
+            status: response.status,
+            error: errText,
+          });
           return;
         }
 
         const data = await response.json();
-        console.log("[BS Meter Background] API response successfully received:", data);
+        console.log(
+          "[BS Meter Background] API response successfully received:",
+          data,
+        );
         sendResponse({ success: true, data: data });
       } catch (err) {
-        console.error(`[BS Meter Background] Network fetch failed: ${err.message}`);
+        console.error(
+          `[BS Meter Background] Network fetch failed: ${err.message}`,
+        );
         sendResponse({ success: false, error: err.message || String(err) });
       }
     })();
@@ -64,16 +86,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         const local = await chrome.storage.local.get(["apiBaseUrl"]);
-        let apiUrl = (local && local.apiBaseUrl ? local.apiBaseUrl : request.apiUrl || "").trim().replace(/\/+$/, "");
+        let apiUrl = (
+          local && local.apiBaseUrl ? local.apiBaseUrl : request.apiUrl || ""
+        )
+          .trim()
+          .replace(/\/+$/, "");
         if (!apiUrl && chrome.storage.sync) {
-          const sync = await chrome.storage.sync.get(["apiBaseUrl"]).catch(() => ({}));
-          if (sync && sync.apiBaseUrl) apiUrl = sync.apiBaseUrl.trim().replace(/\/+$/, "");
+          const sync = await chrome.storage.sync
+            .get(["apiBaseUrl"])
+            .catch(() => ({}));
+          if (sync && sync.apiBaseUrl)
+            apiUrl = sync.apiBaseUrl.trim().replace(/\/+$/, "");
         }
         if (!apiUrl) {
           sendResponse({ success: false, error: "No API URL configured" });
           return;
         }
-        const endpoint = (request.reportUrl || "").startsWith("http") ? request.reportUrl : `${apiUrl}${request.reportUrl}`;
+        const endpoint = (request.reportUrl || "").startsWith("http")
+          ? request.reportUrl
+          : `${apiUrl}${request.reportUrl}`;
         const response = await fetch(endpoint);
         if (!response.ok) {
           sendResponse({ success: false, status: response.status });
@@ -82,7 +113,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const data = await response.json();
         sendResponse({ success: true, data: data });
       } catch (err) {
-        console.error(`[BS Meter Background] Analysis fetch failed: ${err.message}`);
+        console.error(
+          `[BS Meter Background] Analysis fetch failed: ${err.message}`,
+        );
         sendResponse({ success: false, error: err.message || String(err) });
       }
     })();

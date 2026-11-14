@@ -5,16 +5,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusDot = document.getElementById("statusDot");
 
   // Clean up legacy keys if they exist in storage
-  chrome.storage.local.remove(["envMode", "devApiUrl", "prodApiUrl"]).catch(() => {});
+  chrome.storage.local
+    .remove(["envMode", "devApiUrl", "prodApiUrl"])
+    .catch(() => {});
   if (chrome.storage.sync) {
-    chrome.storage.sync.remove(["envMode", "devApiUrl", "prodApiUrl"]).catch(() => {});
+    chrome.storage.sync
+      .remove(["envMode", "devApiUrl", "prodApiUrl"])
+      .catch(() => {});
   }
 
   // Load saved settings: check local storage first, then sync
   chrome.storage.local.get(["apiBaseUrl", "enabled"], (res) => {
     if (res && res.apiBaseUrl) {
       apiUrlInput.value = res.apiBaseUrl;
-      if (typeof res.enabled === "boolean") enabledCheckbox.checked = res.enabled;
+      if (typeof res.enabled === "boolean")
+        enabledCheckbox.checked = res.enabled;
       testConnection(res.apiBaseUrl);
     } else {
       chrome.storage.sync.get(["apiBaseUrl", "enabled"], (syncRes) => {
@@ -40,7 +45,9 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     try {
-      const res = await fetch(`${cleanUrl}/health`, { signal: AbortSignal.timeout(3500) });
+      const res = await fetch(`${cleanUrl}/health`, {
+        signal: AbortSignal.timeout(3500),
+      });
       if (res.ok) {
         statusDot.className = "status-dot online";
       } else {
@@ -64,8 +71,13 @@ document.addEventListener("DOMContentLoaded", () => {
         statusDot.className = "status-dot offline";
         return;
       }
-      if (chrome.permissions && !(await chrome.permissions.contains({ origins: [`${origin}/*`] }))) {
-        const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
+      if (
+        chrome.permissions &&
+        !(await chrome.permissions.contains({ origins: [`${origin}/*`] }))
+      ) {
+        const granted = await chrome.permissions.request({
+          origins: [`${origin}/*`],
+        });
         if (!granted) return;
       }
     }
@@ -80,19 +92,28 @@ document.addEventListener("DOMContentLoaded", () => {
     // Save to local and sync storage immediately
     chrome.storage.local.set(payload, () => {
       if (chrome.storage.sync) {
-        chrome.storage.sync.set({ apiBaseUrl: cleanUrl, enabled: isEnabled }).catch(() => {});
+        chrome.storage.sync
+          .set({ apiBaseUrl: cleanUrl, enabled: isEnabled })
+          .catch(() => {});
       }
 
       // Notify all tabs running x.com/twitter.com immediately
       if (chrome.tabs && chrome.tabs.query) {
         chrome.tabs.query({}, (tabs) => {
           for (const tab of tabs || []) {
-            if (tab.url && /^https?:\/\/(?:[^/]+\.)?(?:x\.com|twitter\.com)(?:\/|$)/i.test(tab.url)) {
-              chrome.tabs.sendMessage(tab.id, {
-                type: "CONFIG_UPDATED",
-                apiBaseUrl: cleanUrl,
-                enabled: isEnabled
-              }).catch(() => {});
+            if (
+              tab.url &&
+              /^https?:\/\/(?:[^/]+\.)?(?:x\.com|twitter\.com)(?:\/|$)/i.test(
+                tab.url,
+              )
+            ) {
+              chrome.tabs
+                .sendMessage(tab.id, {
+                  type: "CONFIG_UPDATED",
+                  apiBaseUrl: cleanUrl,
+                  enabled: isEnabled,
+                })
+                .catch(() => {});
             }
           }
         });
@@ -100,9 +121,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       saveBtn.innerText = "Saved & Applied!";
       saveBtn.style.background = "#10b981";
+      saveBtn.style.color = "#ffffff";
       setTimeout(() => {
         saveBtn.innerText = "Save & Apply";
-        saveBtn.style.background = "#2563eb";
+        saveBtn.style.background = "#ffffff";
+        saveBtn.style.color = "#000000";
       }, 1500);
 
       testConnection(cleanUrl);
