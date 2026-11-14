@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.analysis import router as analysis_router
@@ -26,13 +26,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for Chrome Extension overlays & web clients
+# Enable CORS for Chrome Extension overlays & web clients with Private Network Access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,
+    expose_headers=["Access-Control-Allow-Private-Network"],
 )
 
 app.include_router(analysis_router)

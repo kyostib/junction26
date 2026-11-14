@@ -96,7 +96,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         top_flags = []
 
         for item in selected:
-            evidence = await context_provider.research_claim(item.text)
+            try:
+                evidence = await context_provider.research_claim(item.text)
+            except Exception as e:
+                logger.warning("Researching claim '%s' failed: %s", item.text, e)
+                evidence = []
             evaluation = await evaluate_evidence(item, evidence, llm)
 
             row = claim_rows.get(item.id)
