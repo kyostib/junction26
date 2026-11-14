@@ -1,8 +1,10 @@
+import heapq
 from app.schemas.evidence import EvidenceEvaluation
 
 
 def prioritize(claims, limit: int):
-    return sorted((c for c in claims if getattr(c.claim_type, "value", c.claim_type) == "factual"), key=lambda c: c.importance, reverse=True)[:limit]
+    factual_claims = (c for c in claims if getattr(c.claim_type, "value", c.claim_type) == "factual")
+    return heapq.nlargest(limit, factual_claims, key=lambda c: c.importance)
 
 
 def compute_badge(bs_index: float) -> tuple[str, str]:
@@ -22,19 +24,13 @@ def compute_bs_index(falsehood: float, spam: float, harm: float, propaganda: flo
     correspondingly severe index. Other dimensions provide limited corroboration
     without requiring all three to be extreme to reach the top of the scale.
     """
-    dimensions = {
-        "falsehood": max(0.0, min(100.0, falsehood)),
-        "spam": max(0.0, min(100.0, spam)),
-        "harm": max(0.0, min(100.0, harm)),
-        "propaganda": max(0.0, min(100.0, propaganda)),
-    }
-    dominant = max(dimensions.values())
-    weighted_signal = (
-        0.45 * dimensions["falsehood"]
-        + 0.35 * dimensions["spam"]
-        + 0.20 * dimensions["harm"]
-        + 0.20 * dimensions["propaganda"]
-    )
+    f_clamped = max(0.0, min(100.0, falsehood))
+    s_clamped = max(0.0, min(100.0, spam))
+    h_clamped = max(0.0, min(100.0, harm))
+    p_clamped = max(0.0, min(100.0, propaganda))
+
+    dominant = max(f_clamped, s_clamped, h_clamped, p_clamped)
+    weighted_signal = 0.45 * f_clamped + 0.35 * s_clamped + 0.20 * h_clamped + 0.20 * p_clamped
     corroboration = min(1.0, weighted_signal / 1.20 / 100.0) * 0.25
     return round(min(100.0, dominant + (100.0 - dominant) * corroboration), 1)
 
@@ -54,11 +50,22 @@ def aggregate(
         if evaluation.evidence_quality > 0 and evaluation.verification_status != "uncertain"
     ]
     if grounded_evaluations:
-        total_weight = sum(max(0.05, importance) for importance, _ in grounded_evaluations)
-        avg_accuracy = sum(max(0.05, i) * e.accuracy for i, e in grounded_evaluations) / total_weight
-        avg_quality = sum(max(0.05, i) * e.evidence_quality for i, e in grounded_evaluations) / total_weight
-        avg_misleading = sum(max(0.05, i) * e.misleadingness for i, e in grounded_evaluations) / total_weight
-        avg_sensational = sum(max(0.05, i) * e.sensationalism for i, e in grounded_evaluations) / total_weight
+        total_weight = 0.0
+        acc_total = 0.0
+        qual_total = 0.0
+        mislead_total = 0.0
+        sens_total = 0.0
+        for importance, e in grounded_evaluations:
+            w = max(0.05, importance)
+            total_weight += w
+            acc_total += w * e.accuracy
+            qual_total += w * e.evidence_quality
+            mislead_total += w * e.misleadingness
+            sens_total += w * e.sensationalism
+        avg_accuracy = acc_total / total_weight
+        avg_quality = qual_total / total_weight
+        avg_misleading = mislead_total / total_weight
+        avg_sensational = sens_total / total_weight
     else:
         avg_accuracy = 0.0
         avg_quality = 0.0

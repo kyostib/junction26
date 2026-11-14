@@ -15,6 +15,8 @@ from app.schemas.analysis import AnalysisCreate, AnalysisQueued, AnalysisRespons
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/analyses", tags=["analyses"])
 
+HANDLE_RE = re.compile(r"^[a-z0-9_]{1,15}$")
+
 
 async def run_analysis(analysis_id: str):
     async with SessionLocal() as session:
@@ -47,7 +49,7 @@ async def create_analysis(
         profile_url = f"https://x.com/{username}" if platform == "twitter" else f"https://example.com/{username}"
 
     username = username.lower()
-    if not re.fullmatch(r"[a-z0-9_]{1,15}", username):
+    if not HANDLE_RE.match(username):
         raise HTTPException(status_code=422, detail="profile_url must contain a valid X handle")
 
     # Deduplicate profile: lookup existing profile

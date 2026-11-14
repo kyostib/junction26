@@ -21,6 +21,8 @@ from app.schemas.analysis import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/overlay", tags=["overlay"])
 
+HANDLE_RE = re.compile(r"^[a-z0-9_]{1,15}$")
+
 
 def sanitize_handle(handle: str) -> str:
     h = handle.strip()
@@ -30,7 +32,7 @@ def sanitize_handle(handle: str) -> str:
     else:
         h = h.lstrip("@").strip()
     h = h.lower()
-    return h if re.fullmatch(r"[a-z0-9_]{1,15}", h) else ""
+    return h if HANDLE_RE.match(h) else ""
 
 
 @router.post("/twitter/batch", response_model=OverlayBatchResponse)
@@ -41,7 +43,7 @@ async def batch_twitter_overlay(
     force_refresh: bool = False,
 ):
     """Batch lookup for Twitter handles, optimized for sub-50ms Chrome extension rendering."""
-    clean_handles = list({clean for h in payload.usernames if h.strip() if (clean := sanitize_handle(h))})
+    clean_handles = list(dict.fromkeys(clean for h in payload.usernames if h.strip() and (clean := sanitize_handle(h))))
     logger.debug("Batch overlay requested for handles: %s", clean_handles)
     if not clean_handles:
         raise HTTPException(status_code=422, detail="At least one valid X handle is required")

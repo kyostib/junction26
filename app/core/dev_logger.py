@@ -23,6 +23,9 @@ def is_external_api_call(provider: str) -> bool:
     return any(allowed in p for allowed in ALLOWED_EXTERNAL_PROVIDERS)
 
 
+KEY_REDACT_RE = re.compile(r"([?&]key=)[^&]+")
+
+
 def _sanitize(obj: Any) -> Any:
     """Recursively redacts API keys, bearer tokens, or secrets from logged queries/responses."""
     if isinstance(obj, dict):
@@ -36,7 +39,7 @@ def _sanitize(obj: Any) -> Any:
     elif isinstance(obj, list):
         return [_sanitize(x) for x in obj]
     elif isinstance(obj, str):
-        return re.sub(r"([?&]key=)[^&]+", r"\1[REDACTED]", obj)
+        return KEY_REDACT_RE.sub(r"\1[REDACTED]", obj)
     return obj
 
 
