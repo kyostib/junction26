@@ -53,6 +53,26 @@ def extract_image_urls(text: str) -> list[str]:
     return images
 
 
+def is_external_link(url: str, username: str = "") -> bool:
+    """Returns True if the URL is an external link, filtering out Twitter/X internal profile & share URLs."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url.strip())
+        domain = (parsed.hostname or "").lower().removeprefix("www.")
+        if not domain or domain in {"x.com", "twitter.com", "mobile.twitter.com"}:
+            return False
+        path = (parsed.path or "").lower()
+        if "share" in path or "intent" in path:
+            return False
+        clean_user = username.lower().lstrip("@")
+        if clean_user and path.strip("/").split("/")[0].lower() == clean_user:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def source_quality(domain: str) -> float:
     domain = domain.lower().removeprefix("www.")
     if domain.endswith((".gov", ".gov.uk", ".europa.eu", ".int")):
@@ -195,7 +215,7 @@ class ContextDevProvider:
                         if len(parts) > 1 and len(parts[1]) > 5:
                             bio_candidate = parts[1].strip()
                     bio = bio_candidate
-                    bio_links = extract_urls(bio)
+                    bio_links = [l for l in extract_urls(bio) if is_external_link(l, username)]
 
                 if " on X: " in text:
                     text = text.split(" on X: ", 1)[-1].strip('"').strip("'")
@@ -368,9 +388,9 @@ class ContextDevProvider:
                 break
 
         bio = " ".join(bio_lines).strip()
-        bio_links = extract_urls(bio)
+        bio_links = [l for l in extract_urls(bio) if is_external_link(l, username)]
         for _, link in re.findall(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)", bio):
-            if link not in bio_links:
+            if link not in bio_links and is_external_link(link, username):
                 bio_links.append(link)
 
         return bio, bio_links, tweets
