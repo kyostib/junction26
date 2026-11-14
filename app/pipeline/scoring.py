@@ -15,6 +15,28 @@ def compute_badge(bs_index: float) -> tuple[str, str]:
     return "high", f"[🚨 {score}]"
 
 
+def compute_bs_index(falsehood: float, spam: float, harm: float) -> float:
+    """Return a severity-first 0–100 index from the three risk dimensions.
+
+    A verified severe problem in any one dimension should be able to produce a
+    correspondingly severe index. Other dimensions provide limited corroboration
+    without requiring all three to be extreme to reach the top of the scale.
+    """
+    dimensions = {
+        "falsehood": max(0.0, min(100.0, falsehood)),
+        "spam": max(0.0, min(100.0, spam)),
+        "harm": max(0.0, min(100.0, harm)),
+    }
+    dominant = max(dimensions.values())
+    weighted_signal = (
+        0.45 * dimensions["falsehood"]
+        + 0.35 * dimensions["spam"]
+        + 0.20 * dimensions["harm"]
+    )
+    corroboration = (weighted_signal / 100.0) * 0.25
+    return round(min(100.0, dominant + (100.0 - dominant) * corroboration), 1)
+
+
 def aggregate(
     evaluations: list[tuple[float, EvidenceEvaluation]],
     spam_score: float = 0.0,
@@ -45,9 +67,7 @@ def aggregate(
     spam_score = round(max(0.0, min(100.0, spam_score)), 1)
     harm_score = round(max(0.0, min(100.0, harm_score)), 1)
 
-    # Composite BS Index (0 = cleanest/most truthful, 100 = severe falsehood/spam/harm)
-    # Weights: 45% Falsehood, 35% Spam, 20% Harm
-    bs_index = round(0.45 * falsehood_score + 0.35 * spam_score + 0.20 * harm_score, 1)
+    bs_index = compute_bs_index(falsehood_score, spam_score, harm_score)
     badge_level, badge_label = compute_badge(bs_index)
 
     return {

@@ -354,10 +354,8 @@
     }
 
     const postsAnalyzed = details.posts_analyzed || (data && data.posts_analyzed) || 10;
-    const imagesAnalyzed = details.images_analyzed || (details.image_findings ? details.image_findings.length : 0);
     const bioText = (details.bio && details.bio.trim()) ? details.bio : "No bio text provided on this profile.";
     const bioLinks = details.bio_links || [];
-    const imageFindings = details.image_findings || [];
     const topFlags = (data && data.top_flags) || [];
 
     let claims = details.claims || [];
@@ -376,6 +374,7 @@
     }
     const claimsVerified = details.claims_verified || claims.length;
     const propaganda = details.propaganda_profile || [];
+    const propagandaAvailable = details.propaganda_analysis_status === "analyzed";
     const evidenceBreakdown = details.claim_evidence_breakdown || {};
     const scrapedLinksCount = details.scraped_links_count || bioLinks.length;
     const rawReportUrl = resolveApiUrl(data && data.report_url);
@@ -387,7 +386,7 @@
     const propagandaHtml = propaganda.length ? propaganda.map((item) => {
       const count = Math.max(0, Number(item.count) || 0);
       const examples = (item.examples || []).slice(0, 2).map((example) => `
-        <div class="bs-signal-example">“${escapeHtml(example.matched_text || example.text || "")}”${example.post_id ? ` <span>· post ${escapeHtml(example.post_id)}</span>` : ""}</div>
+        <div class="bs-signal-example">“${escapeHtml(example.matched_text || example.text || "")}”${example.post_id ? ` <span>· post ${escapeHtml(example.post_id)}</span>` : ""}${example.reason ? `<div class="bs-profile-signal-description">${escapeHtml(example.reason)}</div>` : ""}</div>
       `).join("");
       return `<div class="bs-profile-signal">
         <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${count} ${count === 1 ? "post" : "posts"}</span></div>
@@ -442,25 +441,6 @@
       }).join("");
     } else {
       claimsHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No disputed factual claims were asserted in the sampled posts.</div>`;
-    }
-
-    // Images HTML
-    let imagesHtml = "";
-    if (imageFindings.length > 0) {
-      imagesHtml = imageFindings.map((img) => `
-        <div class="bs-inspect-card">
-          <div style="font-weight:700; color:#ffffff; font-size:12px; margin-bottom:4px;">
-            ${img.is_scam ? "🚨 Flagged Scam / Phishing Graphic" : img.is_misleading ? "⚠️ Misleading Visual Media" : "🖼️ Image Media Inspected"}
-          </div>
-          <div class="bs-inspect-card-content">
-            ${img.description ? `<div><b>Visual Description:</b> ${escapeHtml(img.description)}</div>` : ""}
-            ${img.extracted_text ? `<div style="margin-top:2px;"><b>OCR Text Detected:</b> “${escapeHtml(img.extracted_text)}”</div>` : ""}
-            ${img.flags && img.flags.length > 0 ? `<div style="margin-top:4px; color:#f87171;"><b>Flags:</b> ${escapeHtml(img.flags.join(", "))}</div>` : ""}
-          </div>
-        </div>
-      `).join("");
-    } else {
-      imagesHtml = `<div class="bs-inspect-card-content" style="color:#94a3b8; font-style:italic;">No visual media images were attached to the sampled posts.</div>`;
     }
 
     // Bio Links HTML
@@ -518,10 +498,6 @@
                 <div class="bs-stat-lbl">Posts Checked</div>
               </div>
               <div class="bs-stat-chip">
-                <div class="bs-stat-val">${imagesAnalyzed}</div>
-                <div class="bs-stat-lbl">Images Scanned</div>
-              </div>
-              <div class="bs-stat-chip">
                 <div class="bs-stat-val">${scrapedLinksCount}</div>
                 <div class="bs-stat-lbl">Links Uncloaked</div>
               </div>
@@ -543,16 +519,10 @@
               </div>
             </div>
 
-            <!-- Attached Tweet Images -->
-            <div class="bs-inspect-section">
-              <div class="bs-section-title">🖼️ Attached Media & Visual Inspection (OCR)</div>
-              ${imagesHtml}
-            </div>
-
             <!-- Grounded Claims -->
             <div class="bs-inspect-section">
               <div class="bs-section-title">🧭 Propaganda Technique Profile</div>
-              <div class="bs-inspect-card"><div class="bs-profile-signals">${propagandaHtml}</div><div class="bs-profile-signal-description">Counts reflect detected phrase patterns in sampled posts; they describe language signals, not the author's intent.</div></div>
+              <div class="bs-inspect-card"><div class="bs-profile-signals">${propagandaHtml}</div><div class="bs-profile-signal-description">${propagandaAvailable ? "An LLM reviewed sampled posts for contextual examples. Findings describe language patterns and do not establish the author's intent." : "LLM technique analysis was unavailable for this report."}</div></div>
             </div>
 
             <div class="bs-inspect-section">
@@ -660,8 +630,6 @@
                   bio: fullResult.bio || (data.details && data.details.bio),
                   bio_links: fullResult.bio_links || (data.details && data.details.bio_links),
                   posts_analyzed: fullResult.posts_analyzed || (data.details && data.details.posts_analyzed),
-                  images_analyzed: fullResult.images_analyzed || (data.details && data.details.images_analyzed),
-                  image_findings: fullResult.image_findings || (data.details && data.details.image_findings),
                   claims_verified: fullResult.claims_verified || (data.details && data.details.claims_verified),
                   claims: fullResult.claims || (data.details && data.details.claims),
                   scraped_links_count: fullResult.scraped_links_count || (data.details && data.details.scraped_links_count),
