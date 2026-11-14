@@ -9,6 +9,10 @@ from app.schemas.evidence import Stance, WebEvidence
 logger = logging.getLogger(__name__)
 
 
+class ProviderUnavailableError(RuntimeError):
+    """Raised when live social data cannot be obtained safely."""
+
+
 def extract_urls(text: str) -> list[str]:
     return re.findall(r"https?://[^\s)\]\"'>]+", text)
 
@@ -60,8 +64,7 @@ class ContextDevProvider:
         url = f"https://x.com/{clean_user}"
 
         if not self.api_key:
-            logger.info("No CONTEXT_DEV_API_KEY; returning demo Twitter profile fixture for @%s", clean_user)
-            return self._demo_twitter_profile(clean_user)
+            raise ProviderUnavailableError("CONTEXT_DEV_API_KEY is not configured")
 
         def scrape_sync():
             from context.dev import ContextDev
@@ -102,7 +105,7 @@ class ContextDevProvider:
                     }
             except Exception as search_err:
                 logger.warning("Context.dev search fallback also failed: %s", search_err)
-            return self._demo_twitter_profile(clean_user)
+            raise ProviderUnavailableError("Context.dev could not retrieve public posts") from e
 
     async def _search_tweets_via_context_dev(self, username: str) -> list[dict]:
         """Searches for public tweets from a user using Context.dev web search (bypasses login walls)."""

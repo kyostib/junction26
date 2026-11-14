@@ -1,6 +1,8 @@
 import logging
 from urllib.parse import urlparse
 
+import re
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,17 +25,30 @@ async def run_analysis(analysis_id: str):
 
 
 @router.post("", response_model=AnalysisQueued, status_code=202)
-async def create_analysis(payload: AnalysisCreate, tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def create_analysis(
+    payload: AnalysisCreate,
+    tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     raw_url = str(payload.profile_url).strip()
-    platform = payload.platform.lower()
+    platform = payload.platform.lower().strip()
+    if platform != "twitter":
+        raise HTTPException(status_code=422, detail="Only the twitter platform is supported")
 
     if "://" in raw_url:
-        path = urlparse(raw_url).path.rstrip("/")
-        username = path.rsplit("/", 1)[-1] or "sample-account"
+        parsed_url = urlparse(raw_url)
+        if parsed_url.scheme not in {"http", "https"} or parsed_url.hostname not in {"x.com", "twitter.com", "www.x.com", "www.twitter.com"}:
+            raise HTTPException(status_code=422, detail="profile_url must be an x.com or twitter.com URL")
+        path = parsed_url.path.strip("/")
+        username = path.split("/", 1)[0]
         profile_url = raw_url
     else:
         username = raw_url.lstrip("@").strip()
         profile_url = f"https://x.com/{username}" if platform == "twitter" else f"https://example.com/{username}"
+
+    username = username.lower()
+    if not re.fullmatch(r"[a-z0-9_]{1,15}", username):
+        raise HTTPException(status_code=422, detail="profile_url must contain a valid X handle")
 
     # Deduplicate profile: lookup existing profile
     stmt = select(Profile).where(Profile.platform == platform, Profile.username == username)

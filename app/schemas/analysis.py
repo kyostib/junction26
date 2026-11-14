@@ -43,7 +43,7 @@ class UserOverlayResponse(BaseModel):
 
 
 class OverlayBatchRequest(BaseModel):
-    usernames: list[str] = Field(description="List of Twitter handles to look up")
+    usernames: list[str] = Field(min_length=1, max_length=20, description="List of Twitter handles to look up")
 
 
 class OverlayBatchResponse(BaseModel):

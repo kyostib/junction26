@@ -21,12 +21,19 @@ def aggregate(
     harm_score: float = 0.0,
 ) -> dict:
     """Aggregates factuality evaluations, spam signals, and harm metrics into a unified BS Index (0-100)."""
-    if evaluations:
-        total_weight = sum(max(0.05, importance) for importance, _ in evaluations)
-        avg_accuracy = sum(max(0.05, i) * e.accuracy for i, e in evaluations) / total_weight
-        avg_quality = sum(max(0.05, i) * e.evidence_quality for i, e in evaluations) / total_weight
-        avg_misleading = sum(max(0.05, i) * e.misleadingness for i, e in evaluations) / total_weight
-        avg_sensational = sum(max(0.05, i) * e.sensationalism for i, e in evaluations) / total_weight
+    # A missing or failed evidence lookup is unknown, not evidence that the
+    # claim is half false.  Only grounded evaluations influence factuality.
+    grounded_evaluations = [
+        (importance, evaluation)
+        for importance, evaluation in evaluations
+        if evaluation.evidence_quality > 0 or evaluation.verification_status != "uncertain"
+    ]
+    if grounded_evaluations:
+        total_weight = sum(max(0.05, importance) for importance, _ in grounded_evaluations)
+        avg_accuracy = sum(max(0.05, i) * e.accuracy for i, e in grounded_evaluations) / total_weight
+        avg_quality = sum(max(0.05, i) * e.evidence_quality for i, e in grounded_evaluations) / total_weight
+        avg_misleading = sum(max(0.05, i) * e.misleadingness for i, e in grounded_evaluations) / total_weight
+        avg_sensational = sum(max(0.05, i) * e.sensationalism for i, e in grounded_evaluations) / total_weight
     else:
         avg_accuracy = 0.0
         avg_quality = 0.0
@@ -34,7 +41,7 @@ def aggregate(
         avg_sensational = 0.0
 
     # Falsehood score: accuracy is -1.0 (false) to 1.0 (true) -> maps to 100 (false) to 0 (true)
-    falsehood_score = round(max(0.0, min(100.0, (1.0 - avg_accuracy) * 50.0)), 1)
+    falsehood_score = round(max(0.0, min(100.0, (1.0 - avg_accuracy) * 50.0)), 1) if grounded_evaluations else 0.0
     spam_score = round(max(0.0, min(100.0, spam_score)), 1)
     harm_score = round(max(0.0, min(100.0, harm_score)), 1)
 

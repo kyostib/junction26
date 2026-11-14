@@ -5,7 +5,7 @@ import types
 from app.adapters.social.base import PostData
 from app.pipeline.extract_claims import extract_claims
 from app.pipeline.scoring import aggregate, prioritize
-from app.providers.context_dev import ContextDevProvider, DemoWebResearchProvider
+from app.providers.context_dev import ContextDevProvider, DemoWebResearchProvider, ProviderUnavailableError
 from app.providers.llm import DemoLLMProvider
 from app.schemas.claims import ClaimExtraction, ClaimType
 from app.schemas.evidence import EvidenceEvaluation
@@ -52,6 +52,27 @@ def test_opinion_not_prioritized_and_scoring_scale():
     assert result["badge_level"] == "high"
 
 
+def test_unknown_evidence_does_not_increase_bs_index():
+    unknown = EvidenceEvaluation(
+        accuracy=0,
+        evidence_quality=0,
+        misleadingness=0,
+        sensationalism=0,
+        verification_status="uncertain",
+        reason="No evidence",
+    )
+    result = aggregate([(1, unknown)])
+    assert result["bs_index"] == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_context_key_never_returns_demo_posts():
+    provider = ContextDevProvider(api_key="test-key")
+    provider.api_key = None
+    with pytest.raises(ProviderUnavailableError):
+        await provider.scrape_twitter_profile("real_user")
+
+
 @pytest.mark.asyncio
 async def test_context_dev_sdk_is_wrapped_and_normalized(monkeypatch):
     class FakeClient:
@@ -91,4 +112,4 @@ def test_overlay_batch_api_end_to_end():
         assert "sample_user" in data
         assert "another_user" in data
         # Background task runs during synchronous TestClient post
-        assert data["sample_user"]["status"] in ("ready", "queued", "analyzing")
+        assert data["sample_user"]["status"] in ("ready", "queued", "analyzing", "failed")
