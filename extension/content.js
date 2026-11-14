@@ -375,11 +375,36 @@
       }));
     }
     const claimsVerified = details.claims_verified || claims.length;
+    const propaganda = details.propaganda_profile || [];
+    const evidenceBreakdown = details.claim_evidence_breakdown || {};
     const scrapedLinksCount = details.scraped_links_count || bioLinks.length;
     const rawReportUrl = resolveApiUrl(data && data.report_url);
 
     const levelColor = level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : level === "high" ? "#f87171" : "#9ca3af";
     const levelText = level === "low" ? "Low Risk / Clean" : level === "medium" ? "Moderate Risk" : level === "high" ? "High Risk" : "Pending";
+
+    const maxTechniqueCount = Math.max(1, ...propaganda.map((item) => Number(item.count) || 0));
+    const propagandaHtml = propaganda.length ? propaganda.map((item) => {
+      const count = Math.max(0, Number(item.count) || 0);
+      const examples = (item.examples || []).slice(0, 2).map((example) => `
+        <div class="bs-signal-example">“${escapeHtml(example.matched_text || example.text || "")}”${example.post_id ? ` <span>· post ${escapeHtml(example.post_id)}</span>` : ""}</div>
+      `).join("");
+      return `<div class="bs-profile-signal">
+        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${count} ${count === 1 ? "post" : "posts"}</span></div>
+        <div class="bs-profile-signal-track"><div style="width:${Math.min(100, count / maxTechniqueCount * 100)}%"></div></div>
+        <div class="bs-profile-signal-description">${escapeHtml(item.description || "")}</div>
+        ${examples || (count === 0 ? `<div class="bs-profile-signal-description">No matching examples in this sample.</div>` : "")}
+      </div>`;
+    }).join("") : `<div class="bs-inspect-card-content">Technique analysis is not available for this report.</div>`;
+
+    const evidenceCategories = evidenceBreakdown.categories || [];
+    const evidenceHtml = evidenceCategories.length ? evidenceCategories.map((category) => {
+      const examples = (category.claims || []).slice(0, 2).map((item) => {
+        const sources = (item.evidence || []).slice(0, 2).map((source) => safeHttpUrl(source.url) ? `<a class="bs-evidence-link" href="${escapeHtml(safeHttpUrl(source.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.source_domain || source.title || "Source")}</a>` : "").join(" · ");
+        return `<div class="bs-signal-example">“${escapeHtml(item.claim || "") }”${item.reason ? `<div class="bs-profile-signal-description">${escapeHtml(item.reason)}</div>` : ""}${sources ? `<div class="bs-profile-signal-description">Sources: ${sources}</div>` : ""}</div>`;
+      }).join("");
+      return `<div class="bs-evidence-category"><div class="bs-profile-signal-heading"><b>${escapeHtml(category.label || "Evidence")}</b><span>${Number(category.count) || 0}</span></div><div class="bs-profile-signal-description">${escapeHtml(category.description || "")}</div>${examples}</div>`;
+    }).join("") : `<div class="bs-inspect-card-content">Evidence breakdown is not available for this report.</div>`;
 
     // Claims HTML
     let claimsHtml = "";
@@ -522,6 +547,17 @@
             <div class="bs-inspect-section">
               <div class="bs-section-title">🖼️ Attached Media & Visual Inspection (OCR)</div>
               ${imagesHtml}
+            </div>
+
+            <!-- Grounded Claims -->
+            <div class="bs-inspect-section">
+              <div class="bs-section-title">🧭 Propaganda Technique Profile</div>
+              <div class="bs-inspect-card"><div class="bs-profile-signals">${propagandaHtml}</div><div class="bs-profile-signal-description">Counts reflect detected phrase patterns in sampled posts; they describe language signals, not the author's intent.</div></div>
+            </div>
+
+            <div class="bs-inspect-section">
+              <div class="bs-section-title">🔎 Claim Evidence Quality (${Number(evidenceBreakdown.total) || 0} claims)</div>
+              <div class="bs-inspect-card"><div class="bs-evidence-breakdown">${evidenceHtml}</div></div>
             </div>
 
             <!-- Grounded Claims -->

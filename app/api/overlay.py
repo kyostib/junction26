@@ -138,6 +138,8 @@ async def batch_twitter_overlay(
                         "image_findings": res_data.get("image_findings", []),
                         "claims_verified": res_data.get("claims_verified", len(claims_list)),
                         "claims": claims_list,
+                        "propaganda_profile": res_data.get("propaganda_profile", []),
+                        "claim_evidence_breakdown": res_data.get("claim_evidence_breakdown", {}),
                         "scraped_links_count": res_data.get("scraped_links_count", 0),
                         "source_mode": res_data.get("source_mode", "Context.dev Search & Scrape Gateway"),
                         "score_note": res_data.get("score_note", ""),
