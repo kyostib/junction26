@@ -69,6 +69,7 @@ def test_single_severe_dimension_is_not_diluted():
     from app.pipeline.scoring import compute_bs_index
 
     assert compute_bs_index(falsehood=0, spam=88, harm=0) >= 88
+    assert compute_bs_index(falsehood=0, spam=0, harm=0, propaganda=75) >= 75
 
 
 @pytest.mark.asyncio
