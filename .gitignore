@@ -29,3 +29,6 @@ dev_api.log
 .DS_Store
 .vscode/
 .idea/
+
+# Tool managers
+mise.toml

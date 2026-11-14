@@ -1,6 +1,6 @@
 # BS Meter 🎯
 
-**BS Meter** calculates an explainable **"BS Index"** (0–100) for Twitter/X users based on their public tweets. It detects **falsehoods & unverified claims**, **spam & crypto/affiliate shills**, and **harmful content**. 
+**BS Meter** calculates an explainable **"BS Index"** (0–100) for Twitter/X users based on their public tweets. It detects **falsehoods & unverified claims**, **spam & crypto/affiliate shills**, and **harmful content**.
 
 The system is powered by **Context.dev** as its unified external gateway, hosted on FastAPI with a PostgreSQL backend, and comes with a **Chrome Extension** that injects real-time score overlay badges directly next to user handles on `x.com`.
 
@@ -40,12 +40,14 @@ The system is powered by **Context.dev** as its unified external gateway, hosted
 The fastest way to spin up the PostgreSQL database and FastAPI backend:
 
 1. **Set your environment variables**:
+
    ```bash
    cp .env.example .env
    # Add your CONTEXT_DEV_API_KEY in .env
    ```
 
 2. **Start the containers**:
+
    ```bash
    docker compose up --build
    ```
@@ -69,6 +71,7 @@ pip install -e ".[dev]"
 ```
 
 To run with SQLite locally:
+
 ```bash
 export DATABASE_URL="sqlite+aiosqlite:///./bs_meter.db"
 uvicorn app.main:app --reload
@@ -97,6 +100,7 @@ Hover over any badge to view the breakdown across **Falsehoods**, **Spam**, and 
 ## API Endpoints
 
 ### 1. Batch Overlay Lookup (Used by Chrome Extension)
+
 `POST /api/v1/overlay/twitter/batch`
 
 ```json
@@ -108,10 +112,13 @@ Hover over any badge to view the breakdown across **Falsehoods**, **Spam**, and 
 Returns instantaneous cached scores or marks unknown handles as `queued` while scheduling analysis in the background.
 
 ### 2. Single Handle Overlay Lookup
+
 `GET /api/v1/overlay/twitter/{username}?refresh=false`
 
 ### 3. Run Analysis in Terminal
+
 You can run a direct analysis from your command line:
+
 ```bash
 python -m app.cli elonmusk
 ```
@@ -121,6 +128,7 @@ python -m app.cli elonmusk
 ## How Context.dev Powers BS Meter
 
 Context.dev serves as the **unified contact point**:
+
 1. **Twitter Scraping (`client.web.scrape`)**: Bypasses bot detection and renders the client-side JavaScript on `x.com/{username}` to extract recent tweets and profile metadata without needing an X API key.
 2. **Link Uncloaking & Inspection (`client.web.scrape`)**: Follows shortened `t.co` URLs and renders destination landing pages to inspect them for crypto presales, phishing, and affiliate spam.
 3. **Claim Grounding (`client.web.search`)**: Searches authoritative web sources to verify empirical claims.
