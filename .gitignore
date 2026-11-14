@@ -21,6 +21,10 @@ env/
 # Local environment variables
 .env
 
+# Dev API logs
+dev_api.log
+*.log
+
 # macOS & Editors
 .DS_Store
 .vscode/

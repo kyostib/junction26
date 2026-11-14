@@ -481,3 +481,100 @@ async def test_create_analysis_deduplication_does_not_crash_integrity_error():
     await engine.dispose()
 
 
+def test_dev_api_logging_written_to_serial_output_in_dev_mode(capsys, monkeypatch):
+    from app.core import config
+    from app.core.dev_logger import log_dev_api_call
+
+    fake_settings = config.Settings(environment="dev")
+    monkeypatch.setattr(config, "get_settings", lambda: fake_settings)
+
+    log_dev_api_call(
+        provider="Context.dev",
+        operation="web.search",
+        query={"query": "test query", "api_key": "supersecret123"},
+        response={"results": [{"title": "Test Title", "url": "https://example.com"}]},
+        status="SUCCESS",
+        duration_ms=45.2,
+    )
+
+    captured = capsys.readouterr()
+    assert "PROVIDER: Context.dev" in captured.out
+    assert "OPERATION: web.search" in captured.out
+    assert "test query" in captured.out
+    assert "[REDACTED]" in captured.out
+    assert "supersecret123" not in captured.out
+    assert "Test Title" in captured.out
+
+
+def test_dev_api_logging_disabled_in_prod_mode(capsys, monkeypatch):
+    from app.core import config
+    from app.core.dev_logger import log_dev_api_call
+
+    fake_settings = config.Settings(environment="prod")
+    monkeypatch.setattr(config, "get_settings", lambda: fake_settings)
+
+    log_dev_api_call(
+        provider="llm",
+        operation="gemini.generateContent",
+        query={"prompt": "should not be logged"},
+        response={"candidates": []},
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_dev_api_logging_excludes_bsmeter_api_calls(capsys, monkeypatch):
+    from app.core import config
+    from app.core.dev_logger import log_dev_api_call
+
+    fake_settings = config.Settings(environment="dev")
+    monkeypatch.setattr(config, "get_settings", lambda: fake_settings)
+
+    # These should be strictly excluded
+    log_dev_api_call(
+        provider="bsmeter_api",
+        operation="POST /api/v1/overlay/twitter/batch",
+        query={"usernames": ["testuser"]},
+        response={"scores": []},
+    )
+    log_dev_api_call(
+        provider="bs_meter",
+        operation="GET /health",
+        query={},
+        response={"status": "ok"},
+    )
+    log_dev_api_call(
+        provider="fastapi_internal",
+        operation="create_analysis",
+        query={"profile_url": "https://x.com/test"},
+        response={},
+    )
+
+    # Since only excluded BS Meter API calls were made, nothing should be logged to serial output
+    captured_excluded = capsys.readouterr()
+    assert captured_excluded.out == ""
+
+    # Now make allowed calls to context.dev and llm
+    log_dev_api_call(
+        provider="context.dev",
+        operation="client.web.search",
+        query={"query": "test context query"},
+        response={"results": []},
+    )
+    log_dev_api_call(
+        provider="llm",
+        operation="Gemini generateContent",
+        query={"prompt": "test llm prompt"},
+        response={"text": "{}"},
+    )
+
+    captured = capsys.readouterr()
+    assert "PROVIDER: context.dev" in captured.out
+    assert "PROVIDER: llm" in captured.out
+    assert "bsmeter" not in captured.out.lower()
+    assert "fastapi" not in captured.out.lower()
+
+
+
+
