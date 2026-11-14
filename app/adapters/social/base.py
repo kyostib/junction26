@@ -7,6 +7,8 @@ class ProfileData(BaseModel):
     platform: str
     username: str
     profile_url: str
+    bio: str = ""
+    bio_links: list[str] = []
 
 
 class PostData(BaseModel):
@@ -22,4 +24,4 @@ class SocialProfileAdapter(ABC):
     async def fetch_profile(self, profile_url: str) -> ProfileData: ...
 
     @abstractmethod
-    async def fetch_posts(self, profile: ProfileData) -> list[PostData]: ...
+    async def fetch_posts(self, profile: ProfileData, limit: int = 10) -> list[PostData]: ...

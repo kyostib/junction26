@@ -14,7 +14,8 @@ class ProviderUnavailableError(RuntimeError):
 
 
 def extract_urls(text: str) -> list[str]:
-    return re.findall(r"https?://[^\s)\]\"'>]+", text)
+    raw = re.findall(r"https?://[^\s)\]\"'>]+", text)
+    return [u.rstrip(".,;:!\"')>") for u in raw if u.rstrip(".,;:!\"')>")]
 
 
 def source_quality(domain: str) -> float:
@@ -58,7 +59,7 @@ class ContextDevProvider:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or get_settings().context_dev_api_key
 
-    async def scrape_twitter_profile(self, username: str) -> dict:
+    async def scrape_twitter_profile(self, username: str, max_tweets: int = 10) -> dict:
         """Scrapes a Twitter/X user profile using Context.dev with headless JS rendering."""
         clean_user = username.lstrip("@").strip()
         url = f"https://x.com/{clean_user}"
@@ -79,27 +80,34 @@ class ContextDevProvider:
             logger.info("Executing Context.dev web.scrape for Twitter profile @%s", clean_user)
             response = await asyncio.wait_for(asyncio.to_thread(scrape_sync), timeout=60)
             markdown = _extract_markdown(response)
-            tweets = self._parse_tweets_from_markdown(clean_user, markdown)
+            bio, bio_links, tweets = self._parse_profile_and_tweets(clean_user, markdown, max_tweets=max_tweets)
 
             # If direct scrape was blocked by an X login wall, search for public tweets via Context.dev search
             if not tweets:
                 logger.info("Direct scrape for @%s returned no tweets (login wall). Falling back to Context.dev search.", clean_user)
-                tweets = await self._search_tweets_via_context_dev(clean_user)
+                search_bio, search_links, tweets = await self._search_tweets_via_context_dev(clean_user, max_tweets=max_tweets)
+                if not bio:
+                    bio = search_bio
+                    bio_links = search_links
 
             return {
                 "username": clean_user,
                 "profile_url": url,
+                "bio": bio,
+                "bio_links": bio_links,
                 "raw_markdown": markdown,
                 "tweets": tweets,
             }
         except Exception as e:
             logger.warning("Context.dev scrape for @%s encountered error: %s. Trying search fallback.", clean_user, e)
             try:
-                tweets = await self._search_tweets_via_context_dev(clean_user)
-                if tweets:
+                bio, bio_links, tweets = await self._search_tweets_via_context_dev(clean_user, max_tweets=max_tweets)
+                if tweets or bio:
                     return {
                         "username": clean_user,
                         "profile_url": url,
+                        "bio": bio,
+                        "bio_links": bio_links,
                         "raw_markdown": "",
                         "tweets": tweets,
                     }
@@ -107,16 +115,16 @@ class ContextDevProvider:
                 logger.warning("Context.dev search fallback also failed: %s", search_err)
             raise ProviderUnavailableError("Context.dev could not retrieve public posts") from e
 
-    async def _search_tweets_via_context_dev(self, username: str) -> list[dict]:
-        """Searches for public tweets from a user using Context.dev web search (bypasses login walls)."""
+    async def _search_tweets_via_context_dev(self, username: str, max_tweets: int = 10) -> tuple[str, list[str], list[dict]]:
+        """Searches for public tweets and profile snippet from a user using Context.dev web search."""
         logger.info("Executing Context.dev web.search for tweets from @%s", username)
 
         def search_sync():
             from context.dev import ContextDev
             client = ContextDev(api_key=self.api_key)
             return client.web.search(
-                query=f'site:x.com/{username} -inurl:status/ -inurl:search',
-                num_results=10,
+                query=f'site:x.com/{username} -inurl:search',
+                num_results=max(10, max_tweets + 3),
             )
 
         try:
@@ -127,34 +135,48 @@ class ContextDevProvider:
             elif results is None and hasattr(response, "model_dump"):
                 results = response.model_dump().get("results", [])
 
+            bio = ""
+            bio_links = []
             tweets = []
             for item in (results or []):
                 item_dict = item if isinstance(item, dict) else (item.model_dump() if hasattr(item, "model_dump") else vars(item))
                 desc = item_dict.get("description") or ""
                 title = item_dict.get("title") or ""
+                res_url = item_dict.get("url") or ""
                 text = desc if len(desc) > 20 else title
 
                 lower = text.lower()
                 if any(x in lower for x in ("log in", "sign up", "onboarding", "redirect_after_login")):
                     continue
 
+                # Check if this result is the profile home page (has bio)
+                if not bio and "/status/" not in res_url:
+                    bio_candidate = text
+                    if " on X: " in bio_candidate:
+                        bio_candidate = bio_candidate.split(" on X: ", 1)[-1].strip('"').strip("'")
+                    if any(x in bio_candidate.lower() for x in ("the latest tweets from", "the latest posts from")):
+                        # e.g. "The latest Tweets from Name (@handle). Bio text here."
+                        parts = re.split(r"the latest (?:tweets|posts) from [^:]+:\s*", bio_candidate, flags=re.IGNORECASE)
+                        if len(parts) > 1 and len(parts[1]) > 5:
+                            bio_candidate = parts[1].strip()
+                    bio = bio_candidate
+                    bio_links = extract_urls(bio)
+
                 if " on X: " in text:
                     text = text.split(" on X: ", 1)[-1].strip('"').strip("'")
 
-                if len(text) > 15:
+                if len(text) > 15 and len(tweets) < max_tweets:
                     tweets.append({
                         "id": f"tweet-{len(tweets)+1}",
                         "text": text,
                         "links": extract_urls(text),
                     })
-                if len(tweets) >= 10:
-                    break
 
             logger.info("Context.dev web search retrieved %d public tweets for @%s", len(tweets), username)
-            return tweets
+            return bio, bio_links, tweets
         except Exception as e:
             logger.warning("Context.dev search fallback for @%s failed: %s", username, e)
-            return []
+            return "", [], []
 
     async def scrape_link(self, url: str) -> dict:
         """Uncloaks and scrapes an external link (e.g. t.co) using Context.dev."""
@@ -251,76 +273,108 @@ class ContextDevProvider:
             logger.warning("Context.dev web search for '%s' returned: %s. Continuing with empty evidence.", clean_query, e)
             return []
 
-    def _parse_tweets_from_markdown(self, username: str, markdown: str) -> list[dict]:
-        """Parses markdown extracted by Context.dev into individual tweet structures."""
+    def _parse_profile_and_tweets(self, username: str, markdown: str, max_tweets: int = 10) -> tuple[str, list[str], list[dict]]:
+        """Parses profile header bio, bio links, and timeline tweets from markdown."""
         lines = [line.strip() for line in markdown.split("\n") if line.strip()]
+        bio_lines = []
         tweets = []
         current_text = []
+        is_in_timeline = False
+
+        skip_keywords = (
+            "log in", "sign up", "onboarding", "redirect_after_login",
+            "cookies", "privacy policy", "terms of service", "don’t miss what’s happening",
+            "explore", "notifications", "messages", "bookmarks", "lists", "profile", "more",
+        )
 
         for line in lines:
             lower_line = line.lower()
-            if (
-                line.startswith("#")
-                or "follow" in lower_line
-                or "joined" in lower_line
-                or "log in" in lower_line
-                or "sign up" in lower_line
-                or "onboarding" in lower_line
-                or "redirect_after_login" in lower_line
-                or "cookies" in lower_line
-                or "privacy policy" in lower_line
-                or "terms of service" in lower_line
-                or "don’t miss what’s happening" in lower_line
-            ):
+            if any(k in lower_line for k in skip_keywords):
                 continue
+
+            # Transition boundary between header and timeline
+            if any(x in lower_line for x in ("following", "followers", "joined ", "highlights", "posts", "replies", "media")):
+                is_in_timeline = True
+                continue
+
+            # Header / Bio extraction (before timeline begins)
+            if not is_in_timeline:
+                if line.startswith("#"):
+                    continue
+                if len(line) > 5 and not line.startswith("@"):
+                    bio_lines.append(line)
+                    if len(bio_lines) >= 3:
+                        is_in_timeline = True
+                continue
+
+            # Tweet extraction (in timeline)
+            if "follow" in lower_line or line.startswith("#"):
+                continue
+
             if len(line) > 20:
                 current_text.append(line)
                 if len(current_text) >= 2 or len(line) > 100:
                     text = " ".join(current_text)
-                    links = extract_urls(text)
-                    tweets.append({
-                        "id": f"tweet-{len(tweets)+1}",
-                        "text": text,
-                        "links": links,
-                    })
+                    cleaned_text = re.sub(r"^[^@\n]+@[a-zA-Z0-9_]+\s*·\s*\w+\s*", "", text).strip()
+                    if len(cleaned_text) > 15:
+                        links = extract_urls(cleaned_text)
+                        tweets.append({
+                            "id": f"tweet-{len(tweets)+1}",
+                            "text": cleaned_text,
+                            "links": links,
+                        })
                     current_text = []
-            if len(tweets) >= 15:
+            if len(tweets) >= max_tweets:
                 break
 
+        bio = " ".join(bio_lines).strip()
+        bio_links = extract_urls(bio)
+        for _, link in re.findall(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)", bio):
+            if link not in bio_links:
+                bio_links.append(link)
+
+        return bio, bio_links, tweets
+
+    def _parse_tweets_from_markdown(self, username: str, markdown: str) -> list[dict]:
+        """Parses markdown extracted by Context.dev into individual tweet structures."""
+        _, _, tweets = self._parse_profile_and_tweets(username, markdown, max_tweets=15)
         return tweets
 
-    def _demo_twitter_profile(self, username: str) -> dict:
+    def _demo_twitter_profile(self, username: str, max_tweets: int = 10) -> dict:
+        sample_tweets = [
+            {
+                "id": f"{username}-1",
+                "text": "The EU adopted a law targeting new cars with CO2 emissions from 2035; it did not prohibit every existing petrol car.",
+                "links": [],
+            },
+            {
+                "id": f"{username}-2",
+                "text": "The Great Wall of China is visible from the Moon with the naked eye. Unbelievable ancient engineering!",
+                "links": [],
+            },
+            {
+                "id": f"{username}-3",
+                "text": "Check out this secret pre-sale token right now before it 100x! Claim free allocation here: https://airdrop-token-claims.invalid/presale",
+                "links": ["https://airdrop-token-claims.invalid/presale"],
+            },
+            {
+                "id": f"{username}-4",
+                "text": "Global average temperatures have risen substantially since the late 19th century, according to NASA data.",
+                "links": ["https://climate.nasa.gov"],
+            },
+            {
+                "id": f"{username}-5",
+                "text": "I love good coffee and quiet weekend mornings.",
+                "links": [],
+            },
+        ]
         return {
             "username": username,
             "profile_url": f"https://x.com/{username}",
-            "raw_markdown": f"# @{username} Profile on X",
-            "tweets": [
-                {
-                    "id": f"{username}-1",
-                    "text": "The EU adopted a law targeting new cars with CO2 emissions from 2035; it did not prohibit every existing petrol car.",
-                    "links": [],
-                },
-                {
-                    "id": f"{username}-2",
-                    "text": "The Great Wall of China is visible from the Moon with the naked eye. Unbelievable ancient engineering!",
-                    "links": [],
-                },
-                {
-                    "id": f"{username}-3",
-                    "text": "Check out this secret pre-sale token right now before it 100x! Claim free allocation here: https://airdrop-token-claims.invalid/presale",
-                    "links": ["https://airdrop-token-claims.invalid/presale"],
-                },
-                {
-                    "id": f"{username}-4",
-                    "text": "Global average temperatures have risen substantially since the late 19th century, according to NASA data.",
-                    "links": ["https://climate.nasa.gov"],
-                },
-                {
-                    "id": f"{username}-5",
-                    "text": "I love good coffee and quiet weekend mornings.",
-                    "links": [],
-                },
-            ],
+            "bio": "Crypto researcher & futurist. Check out our exclusive pre-sale allocation below!",
+            "bio_links": ["https://airdrop-token-claims.invalid/presale"],
+            "raw_markdown": f"# @{username} Profile on X\nCrypto researcher & futurist...",
+            "tweets": sample_tweets[:max_tweets],
         }
 
 

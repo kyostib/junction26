@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_provider: str = "mock"
     max_claims_to_verify: int = 5
+    max_tweets_to_analyze: int = 10
     # Web origins are opt-in. The browser extension uses its service worker and
     # therefore does not need a permissive CORS policy.
     allowed_origins: list[str] = []

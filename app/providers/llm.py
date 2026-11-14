@@ -4,7 +4,7 @@ from typing import Protocol
 
 import httpx
 
-from app.adapters.social.base import PostData
+from app.adapters.social.base import PostData, ProfileData
 from app.core.config import get_settings
 from app.schemas.claims import ClaimExtraction, ClaimType
 from app.schemas.evidence import EvidenceEvaluation, Stance, WebEvidence
@@ -18,6 +18,14 @@ class LLMProvider(Protocol):
     async def evaluate_evidence(self, claim: ClaimExtraction, evidence: list[WebEvidence]) -> EvidenceEvaluation: ...
 
     async def evaluate_spam_and_harm(self, posts: list[PostData], scraped_links: list[dict]) -> dict: ...
+
+    async def synthesize_analysis(
+        self,
+        profile: ProfileData,
+        posts: list[PostData],
+        scraped_links: list[dict],
+        grounded_claims: list[dict],
+    ) -> dict: ...
 
 
 class GeminiLLMProvider:
@@ -165,6 +173,120 @@ class GeminiLLMProvider:
 
         return await self.fallback_demo.evaluate_spam_and_harm(posts, scraped_links)
 
+    async def synthesize_analysis(
+        self,
+        profile: ProfileData,
+        posts: list[PostData],
+        scraped_links: list[dict],
+        grounded_claims: list[dict],
+    ) -> dict:
+        profile_summary = {
+            "username": profile.username,
+            "profile_url": profile.profile_url,
+            "bio": profile.bio,
+            "bio_links": profile.bio_links,
+        }
+        posts_summary = [
+            {"id": p.platform_post_id, "text": p.text, "links": p.metadata.get("links", [])}
+            for p in posts
+        ]
+        links_summary = [
+            {
+                "url": l.get("url"),
+                "source": l.get("source", "post"),
+                "domain": l.get("domain"),
+                "title": l.get("title"),
+                "content_preview": (l.get("markdown") or "")[:400],
+            }
+            for l in scraped_links
+        ]
+        claims_summary = [
+            {
+                "claim": c.get("claim"),
+                "assessment": c.get("assessment"),
+                "reason": c.get("reason"),
+                "accuracy": c.get("accuracy"),
+                "sources": [
+                    {"domain": e.get("source_domain"), "quality": e.get("source_quality"), "stance": e.get("stance")}
+                    for e in c.get("evidence", [])
+                ],
+            }
+            for c in grounded_claims
+        ]
+
+        prompt = (
+            "You are the BS Index synthesis engine. Your goal is to critically evaluate a social media account's credibility, honesty, and safety.\n"
+            "Analyze the user's profile bio, bio links, recent posts, uncloaked landing pages from external links, and verified factual claims with web evidence.\n\n"
+            f"User Profile:\n{json.dumps(profile_summary, indent=2)}\n\n"
+            f"Recent Posts ({len(posts_summary)}):\n{json.dumps(posts_summary, indent=2)}\n\n"
+            f"Uncloaked External Links ({len(links_summary)}):\n{json.dumps(links_summary, indent=2)}\n\n"
+            f"Verified Factual Claims & Evidence ({len(claims_summary)}):\n{json.dumps(claims_summary, indent=2)}\n\n"
+            "Task:\n"
+            "1. Calculate an overarching BS Index from 0.0 (completely honest, factual, and safe) to 100.0 (blatant falsehoods, phishing/crypto scam, or severe harm).\n"
+            "2. Break down the assessment into specific dimensions (0.0 to 100.0):\n"
+            "   - falsehood: Extent to which claims are contradicted or ungrounded by evidence (0 = truthful, 100 = completely false).\n"
+            "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing, affiliate bait in bio or posts (0 = clean, 100 = blatant scam).\n"
+            "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception (0 = safe, 100 = harmful).\n"
+            "   - evidence_quality: Quality and reliability of sources available (0.0 to 10.0 scale).\n"
+            "   - misleadingness: Degree of cherry-picking, deception, or half-truths (0.0 to 10.0 scale).\n"
+            "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype (0.0 to 10.0 scale).\n"
+            "3. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
+            "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams (including suspicious bio links or uncloaked pages), or harm issues.\n\n"
+            "Return a JSON object with this exact schema:\n"
+            "{\n"
+            '  "bs_index": float between 0.0 and 100.0,\n'
+            '  "dimensions": {\n'
+            '    "falsehood": float between 0.0 and 100.0,\n'
+            '    "spam": float between 0.0 and 100.0,\n'
+            '    "harm": float between 0.0 and 100.0,\n'
+            '    "evidence_quality": float between 0.0 and 10.0,\n'
+            '    "misleadingness": float between 0.0 and 10.0,\n'
+            '    "sensationalism": float between 0.0 and 10.0\n'
+            "  },\n"
+            '  "summary": string,\n'
+            '  "top_flags": [\n'
+            "    {\n"
+            '      "type": "falsehood" | "spam" | "harm",\n'
+            '      "summary": string,\n'
+            '      "assessment": string,\n'
+            '      "evidence_url": string | null,\n'
+            '      "evidence_title": string | null\n'
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+
+        try:
+            res = await self._generate_json(prompt)
+            if isinstance(res, dict) and "bs_index" in res:
+                dims = res.get("dimensions", {})
+                return {
+                    "bs_index": round(float(res.get("bs_index", 0.0)), 1),
+                    "dimensions": {
+                        "falsehood": round(float(dims.get("falsehood", 0.0)), 1),
+                        "spam": round(float(dims.get("spam", 0.0)), 1),
+                        "harm": round(float(dims.get("harm", 0.0)), 1),
+                        "evidence_quality": round(float(dims.get("evidence_quality", 5.0)), 1),
+                        "misleadingness": round(float(dims.get("misleadingness", 0.0)), 1),
+                        "sensationalism": round(float(dims.get("sensationalism", 0.0)), 1),
+                    },
+                    "summary": str(res.get("summary", "")),
+                    "top_flags": [
+                        {
+                            "type": str(f.get("type", "flag")),
+                            "summary": str(f.get("summary", "")),
+                            "assessment": str(f.get("assessment", "")),
+                            "evidence_url": f.get("evidence_url"),
+                            "evidence_title": f.get("evidence_title"),
+                        }
+                        for f in res.get("top_flags", [])
+                    ][:5],
+                }
+        except Exception as e:
+            logger.warning("Gemini synthesis analysis failed: %s. Using heuristic fallback.", e)
+
+        return await self.fallback_demo.synthesize_analysis(profile, posts, scraped_links, grounded_claims)
+
 
 class DemoLLMProvider:
     """Intelligent heuristic and demo evaluator.
@@ -301,6 +423,164 @@ class DemoLLMProvider:
             "harm_score": round(min(100.0, harm_score), 1),
             "spam_flags": list(set(spam_flags))[:3],
             "harm_flags": list(set(harm_flags))[:3],
+        }
+
+    async def synthesize_analysis(
+        self,
+        profile: ProfileData,
+        posts: list[PostData],
+        scraped_links: list[dict],
+        grounded_claims: list[dict],
+    ) -> dict:
+        spam_score = 0.0
+        harm_score = 0.0
+        top_flags: list[dict] = []
+
+        # 1. Inspect uncloaked landing pages (both from bio and tweets)
+        for link in scraped_links:
+            url = link.get("url", "")
+            domain = link.get("domain", "")
+            title = (link.get("title") or "").lower()
+            text = (link.get("markdown") or "").lower()
+            source = link.get("source", "post")
+            source_label = "in bio" if source == "bio" else "in tweet"
+
+            combined_link_text = f"{url} {title} {text}".lower()
+            if any(x in combined_link_text for x in ("airdrop", "presale", "token-claim", "free allocation", "crypto-drain")):
+                spam_score = max(spam_score, 88.0)
+                top_flags.append({
+                    "type": "spam",
+                    "summary": f"Suspicious crypto airdrop/presale landing page uncloaked {source_label} ({domain or url})",
+                    "assessment": "high_scam_risk",
+                    "evidence_url": url,
+                    "evidence_title": link.get("title") or "Uncloaked Scam Destination",
+                })
+            elif any(x in combined_link_text for x in ("affiliate", "promo code", "buy now", "discount")):
+                spam_score = max(spam_score, 55.0)
+                top_flags.append({
+                    "type": "spam",
+                    "summary": f"Commercial/affiliate link {source_label} ({domain or url})",
+                    "assessment": "commercial_spam",
+                    "evidence_url": url,
+                    "evidence_title": link.get("title") or "Affiliate Landing Page",
+                })
+
+        # 2. Inspect profile bio directly
+        bio_lower = profile.bio.lower()
+        if any(x in bio_lower for x in ("presale", "airdrop", "free allocation", "100x", "claim free", "dm for promo")):
+            spam_score = max(spam_score, 80.0)
+            top_flags.append({
+                "type": "spam",
+                "summary": "Profile bio promotes speculative token presale or engagement bait",
+                "assessment": "profile_bait",
+                "evidence_url": None,
+                "evidence_title": None,
+            })
+        if any(x in bio_lower for x in ("hate", "die", "kill", "vermin", "traitor")):
+            harm_score = max(harm_score, 80.0)
+            top_flags.append({
+                "type": "harm",
+                "summary": "Hostile or abusive language detected in profile bio",
+                "assessment": "policy_violation",
+                "evidence_url": None,
+                "evidence_title": None,
+            })
+
+        # 3. Inspect recent posts
+        total_posts = len(posts) or 1
+        spam_keyword_count = 0
+        for p in posts:
+            lower = p.text.lower()
+            if any(x in lower for x in ("presale", "airdrop", "100x", "claim free", "limited spots", "check out this secret")):
+                spam_keyword_count += 1
+                top_flags.append({
+                    "type": "spam",
+                    "summary": f"Engagement/token bait: '{p.text[:60]}...'",
+                    "assessment": "spam_bait",
+                    "evidence_url": None,
+                    "evidence_title": None,
+                })
+            if any(x in lower for x in ("hate", "die", "kill", "vermin", "traitor", "scam them all")):
+                harm_score = max(harm_score, 80.0)
+                top_flags.append({
+                    "type": "harm",
+                    "summary": f"Hostile or abusive language in post: '{p.text[:60]}...'",
+                    "assessment": "policy_violation",
+                    "evidence_url": None,
+                    "evidence_title": None,
+                })
+
+        if spam_keyword_count > 0:
+            keyword_spam = min(100.0, (spam_keyword_count / total_posts) * 120.0)
+            spam_score = max(spam_score, keyword_spam)
+
+        # 4. Inspect verified claims & evidence
+        grounded_claims_with_evidence = [c for c in grounded_claims if c.get("assessment") != "uncertain" or c.get("evidence")]
+        if grounded_claims_with_evidence:
+            accuracies = [float(c.get("accuracy", 0.0)) for c in grounded_claims_with_evidence]
+            avg_accuracy = sum(accuracies) / len(accuracies)
+            falsehood_score = round(max(0.0, min(100.0, (1.0 - avg_accuracy) * 50.0)), 1)
+        else:
+            avg_accuracy = 0.0
+            falsehood_score = 0.0
+
+        for c in grounded_claims:
+            assessment = c.get("assessment")
+            if assessment in ("contradicted", "partially_supported"):
+                evidence_list = c.get("evidence", [])
+                top_ev = evidence_list[0] if evidence_list else {}
+                top_flags.append({
+                    "type": "falsehood",
+                    "summary": str(c.get("claim", ""))[:120],
+                    "assessment": assessment,
+                    "evidence_url": top_ev.get("url"),
+                    "evidence_title": top_ev.get("title") or "Context.dev Fact Check",
+                })
+
+        spam_score = round(min(100.0, spam_score), 1)
+        harm_score = round(min(100.0, harm_score), 1)
+
+        # Composite BS index: 45% falsehood, 35% spam, 20% harm
+        # Plus avoid scam dilution: if spam or harm is extreme (e.g. bio phishing/airdrop), keep bs_index high
+        bs_index = round(0.45 * falsehood_score + 0.35 * spam_score + 0.20 * harm_score, 1)
+        if spam_score >= 80:
+            bs_index = max(bs_index, round(spam_score * 0.9, 1))
+        if harm_score >= 80:
+            bs_index = max(bs_index, round(harm_score * 0.9, 1))
+
+        # Evidence quality, misleadingness, sensationalism
+        has_flags = len(top_flags) > 0
+        evidence_quality = 8.5 if grounded_claims_with_evidence else 5.0
+        misleadingness = 7.0 if falsehood_score > 35 else (3.0 if has_flags else 1.0)
+        sensationalism = 6.5 if (spam_score > 40 or harm_score > 40) else 1.5
+
+        if bs_index <= 30:
+            summary = "Profile exhibits high overall factual consistency with no major spam or deceptive signals."
+        elif bs_index <= 60:
+            summary = "Profile exhibits moderate credibility concerns, including partially supported claims or promotional links."
+        else:
+            summary = "High-risk profile detected with substantiated falsehoods, deceptive destination links, or severe spam indicators."
+
+        # Deduplicate top_flags by summary text
+        unique_flags = []
+        seen_summaries = set()
+        for f in top_flags:
+            if f["summary"] not in seen_summaries:
+                seen_summaries.add(f["summary"])
+                unique_flags.append(f)
+
+        return {
+            "bs_index": bs_index,
+            "dimensions": {
+                "falsehood": falsehood_score,
+                "spam": spam_score,
+                "harm": harm_score,
+                "evidence_quality": evidence_quality,
+                "misleadingness": misleadingness,
+                "sensationalism": sensationalism,
+            },
+            "summary": summary,
+            "top_flags": unique_flags[:5],
         }
 
 

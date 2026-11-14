@@ -1,6 +1,8 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.social.mock import MockSocialAdapter
@@ -9,7 +11,7 @@ from app.core.config import get_settings
 from app.db.models import Analysis, Claim, Evidence, Post, Profile
 from app.pipeline.evaluate_evidence import evaluate_evidence
 from app.pipeline.extract_claims import extract_claims
-from app.pipeline.scoring import aggregate, prioritize
+from app.pipeline.scoring import compute_badge, prioritize
 from app.providers.context_dev import ContextDevProvider
 from app.providers.llm import get_llm_provider
 
@@ -29,28 +31,34 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
 
     try:
         settings = get_settings()
+        max_tweets = settings.max_tweets_to_analyze
         context_provider = ContextDevProvider()
 
         # Select adapter: Twitter via Context.dev or Mock
         if profile.platform == "twitter":
-            social = ContextDevTwitterAdapter(provider=context_provider)
+            social = ContextDevTwitterAdapter(provider=context_provider, max_tweets=max_tweets)
         else:
             social = MockSocialAdapter()
 
         profile_data = await social.fetch_profile(profile.profile_url)
-        posts = await social.fetch_posts(profile_data)
+        posts = await social.fetch_posts(profile_data, limit=max_tweets)
 
-        # Persist only posts that are not already retained for this profile.
-        # Reanalyses should not grow the database with identical scraped data.
-        from sqlalchemy import select
-        existing_post_ids = set(
-            (await session.execute(select(Post.platform_post_id).where(Post.profile_id == profile.id))).scalars()
-        )
+        # Persist posts while avoiding duplicate inserts on re-analysis
+        existing_posts_stmt = select(Post).where(Post.profile_id == profile.id)
+        existing_posts = {p.platform_post_id: p for p in (await session.execute(existing_posts_stmt)).scalars()}
+
         persisted_posts = []
-        all_links = set()
+        all_post_links: dict[str, str] = {}
+
         for item in posts:
-            if item.platform_post_id in existing_post_ids:
+            for link in item.metadata.get("links", []):
+                if link not in all_post_links:
+                    all_post_links[link] = f"tweet-{item.platform_post_id}"
+
+            if item.platform_post_id in existing_posts:
+                persisted_posts.append(existing_posts[item.platform_post_id])
                 continue
+
             post = Post(
                 profile_id=profile.id,
                 platform_post_id=item.platform_post_id,
@@ -62,18 +70,28 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             session.add(post)
             persisted_posts.append(post)
 
-            # Collect embedded links for spam/scam uncloaking
-            for link in item.metadata.get("links", []):
-                all_links.add(link)
-
         await session.flush()
         post_by_platform_id = {p.platform_post_id: p for p in persisted_posts}
 
-        # 1. Uncloak & inspect embedded links via Context.dev scraper
-        scraped_links = []
-        for link in list(all_links)[:5]:  # Budget limit: inspect up to 5 links
-            scraped = await context_provider.scrape_link(link)
-            scraped_links.append(scraped)
+        # 1. Uncloak & inspect links across user's bio and recent tweets
+        link_sources: dict[str, str] = {}
+        for link in profile_data.bio_links:
+            link_sources[link] = "bio"
+        for link, src in all_post_links.items():
+            if link not in link_sources:
+                link_sources[link] = src
+
+        async def scrape_link_with_source(url: str, src: str) -> dict:
+            try:
+                scraped = await context_provider.scrape_link(url)
+                scraped["source"] = src
+                return scraped
+            except Exception as e:
+                logger.warning("Scraping link %s failed: %s", url, e)
+                return {"url": url, "source": src, "domain": "", "title": "", "markdown": "", "error": str(e)}
+
+        links_to_scrape = list(link_sources.items())[:6]
+        scraped_links = await asyncio.gather(*(scrape_link_with_source(u, s) for u, s in links_to_scrape))
 
         # 2. Extract verifiable factual claims
         llm = get_llm_provider()
@@ -98,9 +116,7 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
 
         # 3. Ground truth research via Context.dev Web Search
         selected = prioritize(claims, settings.max_claims_to_verify)
-        evals = []
         claim_results = []
-        top_flags = []
 
         for item in selected:
             try:
@@ -127,62 +143,43 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                         )
                     )
 
-            evals.append((item.importance, evaluation))
-            claim_result_item = {
+            claim_results.append({
                 "claim": item.text,
                 "assessment": evaluation.verification_status,
                 "reason": evaluation.reason,
                 "accuracy": evaluation.accuracy,
                 "evidence": [e.model_dump(mode="json") for e in evidence],
-            }
-            claim_results.append(claim_result_item)
-
-            if evaluation.verification_status in ("contradicted", "partially_supported"):
-                top_evidence = evidence[0] if evidence else None
-                top_flags.append({
-                    "type": "falsehood",
-                    "summary": item.text[:120],
-                    "assessment": evaluation.verification_status,
-                    "evidence_url": top_evidence.url if top_evidence else None,
-                    "evidence_title": top_evidence.title if top_evidence else "Fact Check Source",
-                })
-
-        # 4. Spam & Harm Analysis
-        spam_harm_eval = await llm.evaluate_spam_and_harm(posts, scraped_links)
-        for spam_flag in spam_harm_eval.get("spam_flags", []):
-            top_flags.append({
-                "type": "spam",
-                "summary": spam_flag,
-                "assessment": "high_spam_risk",
-                "evidence_url": scraped_links[0]["url"] if scraped_links else None,
-                "evidence_title": "Uncloaked Destination Page",
             })
 
-        for harm_flag in spam_harm_eval.get("harm_flags", []):
-            top_flags.append({
-                "type": "harm",
-                "summary": harm_flag,
-                "assessment": "policy_violation",
-                "evidence_url": None,
-                "evidence_title": None,
-            })
-
-        # 5. Composite Scoring
-        scores = aggregate(
-            evals,
-            spam_score=spam_harm_eval["spam_score"],
-            harm_score=spam_harm_eval["harm_score"],
+        # 4. Final Unified LLM Synthesis
+        synthesis = await llm.synthesize_analysis(
+            profile=profile_data,
+            posts=posts,
+            scraped_links=scraped_links,
+            grounded_claims=claim_results,
         )
+
+        bs_index = float(synthesis.get("bs_index", 0.0))
+        badge_level, badge_label = compute_badge(bs_index)
+        dims = synthesis.get("dimensions", {})
 
         completed_now = datetime.now(timezone.utc)
         result = {
-            **scores,
+            "bs_index": bs_index,
+            "overall_score": bs_index,
+            "badge_level": badge_level,
+            "badge_label": badge_label,
+            "dimensions": dims,
+            "summary": synthesis.get("summary", ""),
+            "top_flags": synthesis.get("top_flags", [])[:5],
+            "bio": profile_data.bio,
+            "bio_links": profile_data.bio_links,
             "posts_analyzed": len(posts),
+            "max_tweets_configured": max_tweets,
             "factual_claims": sum(c.claim_type.value == "factual" for c in claims),
             "claims_analyzed": len(claims),
             "claims_verified": len(selected),
             "claims": claim_results,
-            "top_flags": top_flags[:5],
             "scraped_links_count": len(scraped_links),
             "source_mode": "Context.dev Search & Scrape Gateway",
             "score_note": "A product heuristic based on public posts, Context.dev web grounding, and link uncloaking.",
@@ -190,15 +187,15 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
 
         # Update Analysis record
         analysis.status = "completed"
-        analysis.overall_score = scores["bs_index"]
-        analysis.badge_level = scores["badge_level"]
-        analysis.badge_label = scores["badge_label"]
-        analysis.factuality_score = scores["dimensions"]["falsehood"]
-        analysis.spam_score = scores["dimensions"]["spam"]
-        analysis.harm_score = scores["dimensions"]["harm"]
-        analysis.evidence_score = scores["dimensions"]["evidence_quality"]
-        analysis.sensationalism_score = scores["dimensions"]["sensationalism"]
-        analysis.misleadingness_score = scores["dimensions"]["misleadingness"]
+        analysis.overall_score = bs_index
+        analysis.badge_level = badge_level
+        analysis.badge_label = badge_label
+        analysis.factuality_score = dims.get("falsehood", 0.0)
+        analysis.spam_score = dims.get("spam", 0.0)
+        analysis.harm_score = dims.get("harm", 0.0)
+        analysis.evidence_score = dims.get("evidence_quality", 0.0)
+        analysis.sensationalism_score = dims.get("sensationalism", 0.0)
+        analysis.misleadingness_score = dims.get("misleadingness", 0.0)
         analysis.claims_analyzed = len(claims)
         analysis.result = result
         analysis.completed_at = completed_now
@@ -208,6 +205,18 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
 
         await session.commit()
         return result
+
+    except Exception:
+        logger.exception("Analysis %s failed", analysis_id)
+        await session.rollback()
+        try:
+            analysis.status = "failed"
+            analysis.error = "Analysis failed; inspect server logs for details."
+            analysis.completed_at = datetime.now(timezone.utc)
+            await session.commit()
+        except Exception:
+            logger.exception("Failed to mark analysis %s as failed", analysis_id)
+        raise
 
     except Exception:
         logger.exception("Analysis %s failed", analysis_id)
