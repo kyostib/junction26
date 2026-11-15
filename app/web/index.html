@@ -1,63 +1,146 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#2510ef">
-  <meta name="description" content="BS Meter helps you spot questionable claims, spam, and harmful signals in public X profiles.">
-  <title>BS Meter — Measure the bullshit</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@1,500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/web/styles.css">
-</head>
-<body>
-  <header class="topbar">
-    <a class="mini-brand" href="/" aria-label="BS Meter home"><span>BS</span><i>-</i> METER</a>
-    <span class="top-note">A browser extension for a noisier internet</span>
-    <nav><a href="#about">The approach</a><a class="nav-scan" href="#scan">Scan a profile <span>↘</span></a></nav>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#2510ef" />
+    <meta
+      name="description"
+      content="BS Meter helps you spot questionable claims, spam, and harmful signals in public X profiles."
+    />
+    <title>BS Meter — Measure the bullshit</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@1,500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="mini-brand" href="/" aria-label="BS Meter home"
+        ><span>BS</span><i>-</i> METER</a
+      >
+      <span class="top-note">A browser extension for a noisier internet</span>
+      <nav>
+        <a href="#about">The approach</a
+        ><a class="nav-scan" href="#scan">Scan a profile <span>↘</span></a>
+      </nav>
+    </header>
 
-  <main>
-    <section class="hero">
-      <h1 class="wordmark" aria-label="BS Meter"><span>BS</span><span class="dash">—</span><span>METER</span></h1>
-      <div class="hero-lower">
-        <p class="hero-tagline">Helping you identify<br><em>propaganda and bots</em> in your feed.</p>
-      </div>
-      <svg class="scribble hero-scribble" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M8 50 C170 15 270 64 430 34 S730 14 990 31"/><path d="M150 44 C182 38 205 49 198 64 C190 79 153 75 157 59 C159 51 169 48 183 47"/></svg>
-    </section>
-
-    <section class="scan-section" id="scan">
-      <div class="scan-grid">
-        <div class="scan-card">
-          <div class="scan-card-head"><span>PROFILE SCANNER <span class="scanner-live">● READY</span></span><span>BSM / 01</span></div>
-          <div class="scan-prompt"><div><p class="kicker">GET A CLOSER LOOK</p><h2>Who’s behind the handle?</h2></div><p>Paste a profile link or enter a username to scan recent public posts.</p></div>
-          <form id="scan-form">
-            <label for="profile-input">X PROFILE LINK OR USERNAME</label>
-            <div class="input-wrap"><span class="link-mark" aria-hidden="true">↗</span><input id="profile-input" name="profile" placeholder="Paste a link or type @username" autocomplete="off" required><button type="submit" id="scan-button">Scan profile <span>↗</span></button></div>
-            <p class="form-hint">For example: <button type="button" class="example">@elonmusk</button> <span>·</span> No account needed</p>
-          </form>
-          <div id="scan-status" class="scan-status" role="status" aria-live="polite" hidden></div>
-          <div id="scan-result" class="scan-result" hidden></div>
+    <main>
+      <section class="hero">
+        <h1 class="wordmark" aria-label="BS Meter">
+          <span>BS</span><span class="dash">—</span><span>METER</span>
+        </h1>
+        <div class="hero-lower">
+          <p class="hero-tagline">
+            Helping you identify<br /><em>propaganda and bots</em> in your feed.
+          </p>
         </div>
-      </div>
-    </section>
+        <svg
+          class="scribble hero-scribble"
+          viewBox="0 0 1000 80"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <path d="M8 50 C170 15 270 64 430 34 S730 14 990 31" />
+          <path
+            d="M150 44 C182 38 205 49 198 64 C190 79 153 75 157 59 C159 51 169 48 183 47"
+          />
+        </svg>
+      </section>
 
-    <section class="about-section" id="about">
-      <div class="about-heading"><h2>It’s a signal.<br><em>Not a verdict.</em></h2><p>BS Meter brings a little more context to X.</p></div>
-      <svg class="scribble about-scribble" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M8 50 C170 15 270 64 430 34 S730 14 990 31"/></svg>
-    </section>
+      <section class="scan-section" id="scan">
+        <div class="scan-grid">
+          <div class="scan-card">
+            <div class="scan-card-head">
+              <span
+                >PROFILE SCANNER <span class="scanner-live">● READY</span></span
+              ><span>BSM / 01</span>
+            </div>
+            <div class="scan-prompt">
+              <div>
+                <p class="kicker">GET A CLOSER LOOK</p>
+                <h2>Who’s behind the handle?</h2>
+              </div>
+              <p>
+                Paste a profile link or enter a username to scan recent public
+                posts.
+              </p>
+            </div>
+            <form id="scan-form">
+              <label for="profile-input">X PROFILE LINK OR USERNAME</label>
+              <div class="input-wrap">
+                <span class="link-mark" aria-hidden="true">↗</span
+                ><input
+                  id="profile-input"
+                  name="profile"
+                  placeholder="Paste a link or type @username"
+                  autocomplete="off"
+                  required
+                /><button type="submit" id="scan-button">
+                  Scan profile <span>↗</span>
+                </button>
+              </div>
+              <p class="form-hint">
+                For example:
+                <button type="button" class="example">@elonmusk</button>
+                <span>·</span> No account needed
+              </p>
+            </form>
+            <div
+              id="scan-status"
+              class="scan-status"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></div>
+            <div id="scan-result" class="scan-result" hidden></div>
+          </div>
+        </div>
+      </section>
 
-    <section class="extension-section" aria-labelledby="extension-title">
-      <div class="extension-info">
-        <div class="extension-mark" aria-hidden="true">BS<span>—</span>M</div>
-        <div class="extension-copy"><p class="kicker">THE EVERYDAY VERSION</p><h2 id="extension-title">Take the meter<br>into your feed.</h2><p>See BS Meter badges beside profile handles as you browse X.</p></div>
-        <a href="https://github.com/kyostib/junction26" class="extension-link" id="extension-link">Explore the extension <span>↗</span></a>
-      </div>
-      <div class="demo-video"><iframe src="https://www.youtube-nocookie.com/embed/bWEpQp2pyLU" title="BS Meter extension demo" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div>
-    </section>
-  </main>
-  <footer><a class="mini-brand" href="/"><span>BS</span><i>-</i> METER</a><span>© BS METER · 2026</span></footer>
-  <script src="/web/app.js" defer></script>
-</body>
+      <section class="extension-section" aria-labelledby="extension-title">
+        <div class="extension-info">
+          <div class="extension-mark" aria-hidden="true">BS<span>—</span>M</div>
+          <div class="extension-copy">
+            <p class="kicker">THE EVERYDAY VERSION</p>
+            <h2 id="extension-title">Take the meter<br />into your feed.</h2>
+            <p>See BS Meter badges beside profile handles as you browse X.</p>
+          </div>
+          <a
+            href="https://github.com/kyostib/junction26"
+            class="extension-link"
+            id="extension-link"
+            >Explore the extension <span>↗</span></a
+          >
+        </div>
+        <div class="demo-video">
+          <iframe
+            src="https://www.youtube-nocookie.com/embed/bWEpQp2pyLU"
+            title="BS Meter extension demo"
+            loading="lazy"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allow="
+              accelerometer;
+              autoplay;
+              clipboard-write;
+              encrypted-media;
+              gyroscope;
+              picture-in-picture;
+              web-share;
+            "
+            allowfullscreen
+          ></iframe>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <a class="mini-brand" href="/"><span>BS</span><i>-</i> METER</a
+      ><span>© BS METER · 2026</span>
+    </footer>
+    <script src="/web/app.js" defer></script>
+  </body>
 </html>
