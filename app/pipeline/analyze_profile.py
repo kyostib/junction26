@@ -200,16 +200,30 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         )
 
         dims = synthesis.get("dimensions", {})
+        falsehood_score = round(max(0.0, min(100.0, float(dims.get("falsehood", 0.0)))), 1)
+        spam_score = round(max(0.0, min(100.0, float(dims.get("spam", 0.0)))), 1)
+        harm_score = round(max(0.0, min(100.0, float(dims.get("harm", 0.0)))), 1)
         propaganda_score = round(max(0.0, min(100.0, float(dims.get("propaganda", 0.0)))), 1)
+        sensationalism_score = round(max(0.0, min(100.0, float(dims.get("sensationalism", 0.0)))), 1)
+        evidence_quality_score = round(max(0.0, min(100.0, float(dims.get("evidence_quality", 50.0)))), 1)
+
+        dims["falsehood"] = falsehood_score
+        dims["spam"] = spam_score
+        dims["harm"] = harm_score
         dims["propaganda"] = propaganda_score
+        dims["sensationalism"] = sensationalism_score
+        dims["evidence_quality"] = evidence_quality_score
+        dims.pop("misleadingness", None)
+
         propaganda_profile = synthesis.get("propaganda_profile", [])
         propaganda_analysis_status = synthesis.get("propaganda_analysis_status", "analyzed")
 
         bs_index = compute_bs_index(
-            float(dims.get("falsehood", 0.0)),
-            float(dims.get("spam", 0.0)),
-            float(dims.get("harm", 0.0)),
+            falsehood_score,
+            spam_score,
+            harm_score,
             propaganda_score,
+            sensationalism_score,
         )
         badge_level, badge_label = compute_badge(bs_index)
 
@@ -272,9 +286,9 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         analysis.factuality_score = dims.get("falsehood", 0.0)
         analysis.spam_score = dims.get("spam", 0.0)
         analysis.harm_score = dims.get("harm", 0.0)
-        analysis.evidence_score = dims.get("evidence_quality", 0.0)
-        analysis.sensationalism_score = dims.get("sensationalism", 0.0)
-        analysis.misleadingness_score = dims.get("misleadingness", 0.0)
+        analysis.evidence_score = evidence_quality_score
+        analysis.sensationalism_score = sensationalism_score
+        analysis.misleadingness_score = None
         analysis.claims_analyzed = len(claims)
         analysis.result = result
         analysis.completed_at = completed_now

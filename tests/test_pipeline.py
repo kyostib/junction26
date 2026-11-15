@@ -481,96 +481,6 @@ async def test_create_analysis_deduplication_does_not_crash_integrity_error():
     await engine.dispose()
 
 
-@pytest.mark.asyncio
-async def test_propaganda_queried_and_validated_alongside_other_dimensions():
-    from app.adapters.social.base import PostData, ProfileData
-    from app.providers.llm import GeminiLLMProvider
-
-    provider = GeminiLLMProvider(api_key="fake-key")
-
-    # Mock _generate_json response with out-of-range dimensions and propaganda techniques
-    async def mock_generate_json(prompt="", parts=None):
-        return {
-            "dimensions": {
-                "falsehood": 120.0,  # Should be clamped to 100.0
-                "spam": -15.0,       # Should be clamped to 0.0
-                "harm": 45.0,
-                "propaganda": 85.5,
-                "evidence_quality": 8.0,
-                "misleadingness": 6.5,
-                "sensationalism": 7.0,
-            },
-            "propaganda_techniques": [
-                {
-                    "key": "loaded_language",
-                    "score": 0.85,
-                    "post_id": "p-1",
-                    "matched_text": "destroy the country",
-                    "reason": "Emotive framing",
-                }
-            ],
-            "summary": "Profile with heavy emotional rhetoric.",
-            "top_flags": [
-                {
-                    "type": "propaganda",
-                    "summary": "Manipulative rhetoric: 'destroy the country'",
-                    "assessment": "rhetoric_flag",
-                    "evidence_url": None,
-                    "evidence_title": None,
-                }
-            ],
-        }
-
-    provider._generate_json = mock_generate_json
-    posts = [PostData(platform_post_id="p-1", text="This bill will destroy the country!")]
-    profile = ProfileData(platform="twitter", username="pundit", profile_url="https://x.com/pundit")
-
-    res = await provider.synthesize_analysis(profile, posts, [], [])
-
-    # Verify dimensions are clamped and validated consistently
-    dims = res["dimensions"]
-    assert dims["falsehood"] == 100.0
-    assert dims["spam"] == 0.0
-    assert dims["harm"] == 45.0
-    assert dims["propaganda"] == 85.5
-    assert dims["sensationalism"] == 7.0
-
-    # Verify propaganda profile and flags
-    assert res["propaganda_analysis_status"] == "analyzed"
-    assert len(res["propaganda_profile"]) > 0
-    loaded = next(t for t in res["propaganda_profile"] if t["key"] == "loaded_language")
-    assert loaded["score"] == 0.85
-    assert len(loaded["examples"]) == 1
-
-    assert len(res["top_flags"]) == 1
-    assert res["top_flags"][0]["type"] == "propaganda"
-
-
-@pytest.mark.asyncio
-async def test_demo_provider_evaluates_propaganda_heuristics():
-    from app.adapters.social.base import PostData, ProfileData
-    from app.providers.llm import DemoLLMProvider
-
-    llm = DemoLLMProvider()
-    posts = [
-        PostData(platform_post_id="1", text="Everyone knows this ridiculous plan will destroy the country overnight!"),
-        PostData(platform_post_id="2", text="Real patriots will vote against this corrupt cabal."),
-    ]
-    profile = ProfileData(platform="twitter", username="rhetoric_user", profile_url="https://x.com/rhetoric_user")
-
-    res = await llm.synthesize_analysis(profile, posts, [], [])
-
-    # Verify propaganda is computed and included in dimensions
-    assert "propaganda" in res["dimensions"]
-    assert res["dimensions"]["propaganda"] > 0.0
-    assert res["propaganda_analysis_status"] == "analyzed"
-
-    # Verify active techniques are found
-    assert any(t["score"] > 0 for t in res["propaganda_profile"])
-    # Verify top_flags includes a propaganda flag
-    assert any(f["type"] == "propaganda" for f in res["top_flags"])
-
-
 
 def test_dev_api_logging_written_to_serial_output_in_dev_mode(capsys, monkeypatch):
     from app.core import config
@@ -803,9 +713,8 @@ async def test_propaganda_queried_and_validated_alongside_other_dimensions():
                 "spam": -15.0,       # Should be clamped to 0.0
                 "harm": 45.0,
                 "propaganda": 85.5,
-                "evidence_quality": 8.0,
-                "misleadingness": 6.5,
-                "sensationalism": 7.0,
+                "evidence_quality": 80.0,
+                "sensationalism": 70.0,
             },
             "propaganda_techniques": [
                 {
@@ -834,13 +743,20 @@ async def test_propaganda_queried_and_validated_alongside_other_dimensions():
 
     res = await provider.synthesize_analysis(profile, posts, [], [])
 
-    # Verify dimensions are clamped and validated consistently
+    # Verify dimensions are clamped and validated consistently on 0-100 scale
     dims = res["dimensions"]
     assert dims["falsehood"] == 100.0
     assert dims["spam"] == 0.0
     assert dims["harm"] == 45.0
     assert dims["propaganda"] == 85.5
-    assert dims["sensationalism"] == 7.0
+    assert dims["sensationalism"] == 70.0
+    assert dims["evidence_quality"] == 80.0
+    assert "misleadingness" not in dims
+
+    # Verify all metrics are bounded 0-100 numeric values
+    for metric_name, val in dims.items():
+        assert isinstance(val, (int, float))
+        assert 0.0 <= val <= 100.0
 
     # Verify propaganda profile and flags
     assert res["propaganda_analysis_status"] == "analyzed"
@@ -851,6 +767,19 @@ async def test_propaganda_queried_and_validated_alongside_other_dimensions():
 
     assert len(res["top_flags"]) == 1
     assert res["top_flags"][0]["type"] == "propaganda"
+
+
+def test_compute_bs_index_weights_and_sensationalism():
+    from app.pipeline.scoring import compute_bs_index
+
+    # Severity-first: dominant metric sets lower bound
+    assert compute_bs_index(falsehood=90.0, spam=0, harm=0) >= 90.0
+    assert compute_bs_index(falsehood=0, spam=85.0, harm=0) >= 85.0
+
+    # Sensationalism and corroboration
+    score_with_sens = compute_bs_index(falsehood=50.0, spam=0, harm=0, propaganda=0, sensationalism=80.0)
+    score_without_sens = compute_bs_index(falsehood=50.0, spam=0, harm=0, propaganda=0, sensationalism=0.0)
+    assert score_with_sens > score_without_sens
 
 
 @pytest.mark.asyncio
@@ -876,9 +805,5 @@ async def test_demo_provider_evaluates_propaganda_heuristics():
     assert any(t["score"] > 0 for t in res["propaganda_profile"])
     # Verify top_flags includes a propaganda flag
     assert any(f["type"] == "propaganda" for f in res["top_flags"])
-
-
-
-
 
 
