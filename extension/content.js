@@ -693,7 +693,7 @@
               .slice(0, 2)
               .map(
                 (example) => `
-        <div class="bs-signal-example">“${escapeHtml(example.matched_text || example.text || "")}”${example.post_id ? ` <span>· post ${escapeHtml(example.post_id)}</span>` : ""}${example.reason ? `<div class="bs-profile-signal-description">${escapeHtml(example.reason)}</div>` : ""}</div>
+        <div class="bs-signal-example"><p style="margin-bottom: 4px;">${escapeHtml(example.matched_text || example.text || "")}</p>${example.post_id ? ` <span> PostID: ${escapeHtml(example.post_id)}</span>` : ""}${example.reason ? `<div class="bs-profile-signal-description">${escapeHtml(example.reason)}</div>` : ""}</div>
       `,
               )
               .join("");
