@@ -306,8 +306,8 @@ async def test_end_to_end_analysis_pipeline_with_bio():
         result = await analyze_profile(analysis_id, session)
 
     assert result["bs_index"] >= 0.0
-    assert result["bio"] == ""
-    assert result["bio_links"] == []
+    assert result["bio"] == "Tech researcher & market observer. Insights on climate and European tech policy."
+    assert result["bio_links"] == ["https://example.org/report"]
     assert "max_tweets_configured" in result
     assert "dimensions" in result
     assert "top_flags" in result
@@ -574,6 +574,122 @@ def test_dev_api_logging_excludes_bsmeter_api_calls(capsys, monkeypatch):
     assert "PROVIDER: llm" in captured.out
     assert "bsmeter" not in captured.out.lower()
     assert "fastapi" not in captured.out.lower()
+
+
+def test_parse_profile_and_tweets_thread_reply_separation():
+    provider = ContextDevProvider(api_key="mock-key")
+    sample_markdown = """
+# Researcher Jane (@janeresearch)
+AI & Renewable Energy Researcher. Direct link: https://jane-lab.invalid/brief.
+Joined March 2019
+500 Following  5,200 Followers
+Posts  Replies  Highlights  Media
+
+Jane Researcher @janeresearch · 1h
+Published our Q3 overview on European grid storage: https://jane-lab.invalid/grid-2026.
+
+Dr. Critic @critic · 4h
+Solar expansion in Northern Europe is impossible due to seasonal darkness.
+
+Jane Researcher @janeresearch · 2h
+Replying to @critic
+Actually, cross-border HVDC interconnections and wind complement winter demand nicely. https://hvdc-europe.invalid/stats
+
+Jane Researcher @janeresearch · 1d
+First paragraph of an extended post detailing battery supply chains.
+
+Second paragraph explaining sodium-ion alternative chemistry and cost declines.
+"""
+    bio, bio_links, tweets = provider._parse_profile_and_tweets("janeresearch", sample_markdown, max_tweets=10)
+
+    # 1. Bio and bio links
+    assert "AI & Renewable Energy Researcher" in bio
+    assert "https://jane-lab.invalid/brief" in bio_links
+    assert not any("x.com" in l or "twitter.com" in l for l in bio_links)
+
+    # 2. Tweets count and separation
+    assert len(tweets) == 3
+
+    # First tweet: standalone
+    assert "Published our Q3 overview" in tweets[0]["text"]
+    assert tweets[0]["in_reply_to"] is None
+    assert "https://jane-lab.invalid/grid-2026" in tweets[0]["links"]
+
+    # Second tweet: reply to @critic with thread context
+    assert "Actually, cross-border HVDC" in tweets[1]["text"]
+    assert "Replying to" not in tweets[1]["text"]
+    assert tweets[1]["in_reply_to"] is not None
+    assert tweets[1]["in_reply_to"]["author"] == "@critic"
+    assert "Solar expansion in Northern Europe is impossible" in tweets[1]["in_reply_to"]["text"]
+    assert "https://hvdc-europe.invalid/stats" in tweets[1]["links"]
+
+    # Third tweet: multi-paragraph preserved in single post
+    assert "First paragraph of an extended post" in tweets[2]["text"]
+    assert "Second paragraph explaining sodium-ion" in tweets[2]["text"]
+    assert tweets[2]["in_reply_to"] is None
+
+
+def test_post_data_expanded_links_and_thread_context():
+    post = PostData(
+        platform_post_id="p-101",
+        text="Solar battery storage has reached parity.",
+        in_reply_to={"author": "@other", "text": "Storage is too expensive."},
+        expanded_links=[
+            {
+                "url": "https://t.co/xyz",
+                "resolved_url": "https://energy.invalid/storage",
+                "domain": "energy.invalid",
+                "title": "Grid Storage Parity",
+                "description": "Analysis of battery storage costs.",
+            }
+        ],
+    )
+    dumped = post.model_dump()
+    assert dumped["in_reply_to"]["author"] == "@other"
+    assert dumped["expanded_links"][0]["domain"] == "energy.invalid"
+    assert dumped["expanded_links"][0]["resolved_url"] == "https://energy.invalid/storage"
+
+
+@pytest.mark.asyncio
+async def test_analyze_profile_posts_have_expanded_links_and_bio():
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.db.database import Base
+    from app.db.models import Analysis, Profile
+    from app.pipeline.analyze_profile import analyze_profile
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        profile = Profile(platform="mock", username="testuser", profile_url="https://x.com/testuser")
+        session.add(profile)
+        await session.flush()
+        analysis = Analysis(profile_id=profile.id, status="queued")
+        session.add(analysis)
+        await session.commit()
+        analysis_id = analysis.id
+
+    async with session_factory() as session:
+        result = await analyze_profile(analysis_id, session)
+
+    # Check clean bio & bio links
+    assert result["bio"] != ""
+    assert len(result["bio_links"]) > 0
+
+    # Check posts have expanded_links and in_reply_to fields
+    assert "posts" in result
+    assert len(result["posts"]) > 0
+    post_with_link = next((p for p in result["posts"] if p.get("links")), None)
+    assert post_with_link is not None
+    assert "expanded_links" in post_with_link
+    assert len(post_with_link["expanded_links"]) > 0
+    assert post_with_link["expanded_links"][0]["domain"] == "example.org"
+    assert "in_reply_to" in post_with_link
+
+    await engine.dispose()
+
 
 
 
