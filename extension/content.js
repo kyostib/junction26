@@ -437,19 +437,19 @@
         
       </div>
       <div>
-        <div class="bs-metric-row"><span>Falsehoods / Claims:</span><span>${Math.round(falsehood)}</span></div>
+        <div class="bs-metric-row"><span>Falsehoods:</span><span>${Math.round(falsehood)} / 100</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${falsehood}%; background:#38bdf8;"></div></div>
 
-        <div class="bs-metric-row"><span>Spam & Scams:</span><span>${Math.round(spam)}</span></div>
+        <div class="bs-metric-row"><span>Spam & Scams:</span><span>${Math.round(spam)} / 100</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${spam}%; background:#f59e0b;"></div></div>
 
-        <div class="bs-metric-row"><span>Harm & Toxicity:</span><span>${Math.round(harm)}</span></div>
+        <div class="bs-metric-row"><span>Harm & Toxicity:</span><span>${Math.round(harm)} / 100</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${harm}%; background:#f87171;"></div></div>
 
-        <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(propaganda)}</span></div>
+        <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(propaganda)} / 100</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${propaganda}%; background:#a855f7;"></div></div>
 
-        <div class="bs-metric-row"><span>Sensationalism:</span><span>${Math.round(sensationalism)}</span></div>
+        <div class="bs-metric-row"><span>Sensationalism:</span><span>${Math.round(sensationalism)} / 100</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${sensationalism}%; background:#ec4899;"></div></div>
       </div>
     `;
@@ -561,11 +561,11 @@
       summary.trim().length === 0
     ) {
       if (level === "low") {
-        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and found low credibility risk (${score}/100 BS Index). Public content exhibits consistency with minimal deceptive, spam, or manipulative patterns.`;
+        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and found low credibility risk (${score} / 100 BS Index). Public content exhibits consistency with minimal deceptive, spam, or manipulative patterns.`;
       } else if (level === "medium") {
-        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and noted moderate credibility concerns (${score}/100 BS Index). Several promotional statements, ungrounded claims, or uncloaked links warrant caution.`;
+        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and noted moderate credibility concerns (${score} / 100 BS Index). Several promotional statements, ungrounded claims, or uncloaked links warrant caution.`;
       } else {
-        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and identified elevated risk factors (${score}/100 BS Index). Flagged signals include unverified assertions, sensational claims, or potential spam/phishing links.`;
+        summary = `Context.dev analysis evaluated @${escapeHtml(handle)} and identified elevated risk factors (${score} / 100 BS Index). Flagged signals include unverified assertions, sensational claims, or potential spam/phishing links.`;
       }
     }
 
@@ -624,8 +624,11 @@
         : Math.round(
             Math.max(
               0,
-              ...(propaganda || []).map((p) => Number(p.score) || 0),
-            ) * 100,
+              ...(propaganda || []).map((p) => {
+                const s = Number(p.score) || 0;
+                return s <= 1.0 && s > 0 ? s * 100 : s;
+              }),
+            ),
           );
     const activeTechniquesCount = propaganda.filter(
       (item) => (Number(item.score) || 0) > 0 || (Number(item.count) || 0) > 0,
@@ -636,9 +639,15 @@
       ? propaganda
           .map((item) => {
             const count = Math.max(0, Number(item.count) || 0);
-            const techniqueScore = Math.max(
-              0,
-              Math.min(1, Number(item.score) || 0),
+            const rawScore = Number(item.score) || 0;
+            const techniqueScore = Math.round(
+              Math.max(
+                0,
+                Math.min(
+                  100,
+                  rawScore <= 1.0 && rawScore > 0 ? rawScore * 100 : rawScore,
+                ),
+              ),
             );
             const examples = (item.examples || [])
               .slice(0, 2)
@@ -649,7 +658,7 @@
               )
               .join("");
             return `<div class="bs-profile-signal">
-        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${techniqueScore} score · ${count} ${count === 1 ? "post" : "posts"}</span></div>
+        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${techniqueScore} / 100 · ${count} ${count === 1 ? "post" : "posts"}</span></div>
         <div class="bs-profile-signal-track"><div style="width:${techniqueScore}%;"></div></div>
         <div class="bs-profile-signal-description">${escapeHtml(item.description || "")}</div>
         ${examples}
@@ -708,18 +717,39 @@
       claimsHtml = `<div class="bs-inspect-card-content" style="color:var(--bs-text-secondary); font-style:italic;">No disputed factual claims were asserted in the sampled posts.</div>`;
     }
 
+    // Helper for metric dimension colors
+    const metricColorMap = {
+      falsehood: "#38bdf8",
+      spam: "#f59e0b",
+      harm: "#f87171",
+      propaganda: "#a855f7",
+      sensationalism: "#ec4899",
+    };
+
+    function getFlagMetricColor(type) {
+      const key = (type || "").toLowerCase().trim();
+      if (metricColorMap[key]) return metricColorMap[key];
+      if (key.includes("falsehood") || key.includes("claim") || key.includes("fact") || key.includes("untruth")) return "#38bdf8";
+      if (key.includes("spam") || key.includes("scam") || key.includes("phish") || key.includes("airdrop")) return "#f59e0b";
+      if (key.includes("harm") || key.includes("toxic") || key.includes("abuse") || key.includes("hate")) return "#f87171";
+      if (key.includes("propaganda") || key.includes("rhetoric") || key.includes("bias") || key.includes("manipulat")) return "#a855f7";
+      if (key.includes("sensational") || key.includes("clickbait") || key.includes("hype")) return "#ec4899";
+      return "var(--bs-text-primary)";
+    }
+
     // Flags HTML
     let flagsDetailHtml = "";
     if (topFlags.length > 0) {
       flagsDetailHtml = topFlags
-        .map(
-          (f) => `
+        .map((f) => {
+          const metricColor = getFlagMetricColor(f.type);
+          return `
         <div class="bs-flag-item">
-          • <b>${escapeHtml((f.type || "SIGNAL").toUpperCase())}:</b> ${escapeHtml(f.summary)}
+          <span style="color:${metricColor} !important; font-weight:700;">•</span> <b class="bs-flag-title" style="color:${metricColor} !important;">${escapeHtml((f.type || "SIGNAL").toUpperCase())}:</b> ${escapeHtml(f.summary)}
           ${safeHttpUrl(f.evidence_url) ? `<a href="${escapeHtml(safeHttpUrl(f.evidence_url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Evidence Source: ${escapeHtml(f.evidence_title || "Context.dev Source")}</a>` : ""}
         </div>
-      `,
-        )
+      `;
+        })
         .join("");
     } else {
       flagsDetailHtml = `<div style="color:var(--bs-status-supported-text); font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("check-circle-2", 13)} No major BS detected.</div>`;
@@ -737,23 +767,23 @@
       <div class="bs-inspect-section">
         <div class="bs-section-title">${lucideIcon("sliders", 14)} Dimensions of BS</div>
         <div class="bs-inspect-card" style="margin-bottom:10px;">
-          <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}</span></div>
+          <div class="bs-metric-row"><span>Falsehood:</span><span>${Math.round(safePercent(dims.falsehood))} / 100</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.falsehood)}%; background:#38bdf8;"></div></div>
 
-          <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))}</span></div>
+          <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))} / 100</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.spam)}%; background:#f59e0b;"></div></div>
 
-          <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}</span></div>
+          <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))} / 100</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.harm)}%; background:#f87171;"></div></div>
 
-          <div class="bs-metric-row"><span>Propaganda & Rhetoric:</span><span>${Math.round(safePercent(propagandaScore))}</span></div>
+          <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(safePercent(propagandaScore))} / 100</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(propagandaScore)}%; background:#a855f7;"></div></div>
 
-          <div class="bs-metric-row"><span>Sensationalism & Clickbait:</span><span>${Math.round(safePercent(dims.sensationalism))}</span></div>
+          <div class="bs-metric-row"><span>Sensationalism:</span><span>${Math.round(safePercent(dims.sensationalism))} / 100</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.sensationalism)}%; background:#ec4899;"></div></div>
         </div>
         <div class="bs-inspect-card">
-          <div style="font-weight:700; color:var(--bs-text-primary); margin-bottom:6px; font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("flag", 12)} Active Flags:</div>
+          <div style="font-weight:700; color:var(--bs-text-primary); margin-bottom:6px; font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("flag", 12)} Biggest Issues:</div>
           ${flagsDetailHtml}
         </div>
       </div>
@@ -764,7 +794,7 @@
     if (postsList.length > 0) {
       postsHtml = `
         <div class="bs-inspect-section">
-          <div class="bs-section-title">${lucideIcon("message-square", 14)} Posts Checked (${postsList.length})</div>
+          <div class="bs-section-title">${lucideIcon("message-square", 14)} Posts Reviewed (${postsList.length})</div>
           ${postsList
             .map((p, idx) => {
               const postNum = idx + 1;
@@ -786,7 +816,7 @@
               <div class="bs-post-card">
                 <div class="bs-post-header">
                   <span class="bs-post-id-badge">Post #${postNum} · ID: ${escapeHtml(postId)}</span>
-                  ${safeHttpUrl(postUrl) ? `<a href="${escapeHtml(safeHttpUrl(postUrl))}" target="_blank" rel="noopener noreferrer" class="bs-post-x-link">View on x.com ${lucideIcon("external-link", 11)}</a>` : ""}
+                  ${safeHttpUrl(postUrl) ? `<a href="${escapeHtml(safeHttpUrl(postUrl))}" target="_blank" rel="noopener noreferrer" class="bs-post-x-link">View Source ${lucideIcon("external-link", 11)}</a>` : ""}
                 </div>
                 <div class="bs-post-text">“${escapeHtml(p.text || "")}”</div>
                 ${
@@ -795,16 +825,6 @@
                   <div class="bs-post-links">
                     <span style="color:var(--bs-text-secondary); font-weight:600;">Embedded Links:</span>
                     ${postLinks.map((l) => (safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">${escapeHtml(l)}</a>` : escapeHtml(l))).join(" ")}
-                  </div>
-                `
-                    : ""
-                }
-                ${
-                  matchedClaims.length > 0
-                    ? `
-                  <div class="bs-post-matched-claims">
-                    <span style="font-weight:700;">Flagged Assertion:</span>
-                    ${matchedClaims.map((c) => `“${escapeHtml(c.claim || "")}” [${escapeHtml((c.assessment || "evaluated").replace(/_/g, " "))}]`).join("; ")}
                   </div>
                 `
                     : ""
@@ -914,7 +934,7 @@
       </div>
 
       <div class="bs-inspect-section">
-        <div class="bs-section-title">${lucideIcon("scale", 14)} Verified Stances (${claims.length})</div>
+        <div class="bs-section-title">${lucideIcon("scale", 14)} Stance Review (${claims.length})</div>
         ${claimsHtml}
       </div>
     `;
@@ -922,7 +942,7 @@
     // Section 5: Propaganda Breakdown HTML
     const propagandaSectionHtml = `
       <div class="bs-inspect-section">
-        <div class="bs-section-title">${lucideIcon("megaphone", 14)} Propaganda Indicators (${activeTechniquesCount} found in ${propaganda.length || 7})</div>
+        <div class="bs-section-title">${lucideIcon("megaphone", 14)} Propaganda Indicators (${activeTechniquesCount} found in ${propaganda.length || 11})</div>
         <div class="bs-inspect-card">
           <div class="bs-profile-signals">${propagandaHtml}</div>
         </div>
