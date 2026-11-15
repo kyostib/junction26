@@ -37,24 +37,41 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  let activeHealthController = null;
+
   async function testConnection(url) {
+    if (activeHealthController) {
+      activeHealthController.abort();
+      activeHealthController = null;
+    }
+
     statusDot.className = "status-dot";
     const cleanUrl = (url || "").trim().replace(/\/+$/, "");
     if (!cleanUrl) {
       statusDot.className = "status-dot offline";
       return;
     }
+
+    activeHealthController = new AbortController();
+    const currentController = activeHealthController;
+
     try {
       const res = await fetch(`${cleanUrl}/health`, {
-        signal: AbortSignal.timeout(3500),
+        signal: currentController.signal,
       });
       if (res.ok) {
         statusDot.className = "status-dot online";
       } else {
         statusDot.className = "status-dot offline";
       }
-    } catch {
-      statusDot.className = "status-dot offline";
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        statusDot.className = "status-dot offline";
+      }
+    } finally {
+      if (activeHealthController === currentController) {
+        activeHealthController = null;
+      }
     }
   }
 
@@ -97,26 +114,40 @@ document.addEventListener("DOMContentLoaded", () => {
           .catch(() => {});
       }
 
-      // Notify all tabs running x.com/twitter.com immediately
+      // Notify targeted tabs running x.com/twitter.com immediately
       if (chrome.tabs && chrome.tabs.query) {
-        chrome.tabs.query({}, (tabs) => {
-          for (const tab of tabs || []) {
-            if (
-              tab.url &&
-              /^https?:\/\/(?:[^/]+\.)?(?:x\.com|twitter\.com)(?:\/|$)/i.test(
-                tab.url,
-              )
-            ) {
-              chrome.tabs
-                .sendMessage(tab.id, {
-                  type: "CONFIG_UPDATED",
-                  apiBaseUrl: cleanUrl,
-                  enabled: isEnabled,
-                })
-                .catch(() => {});
+        const notifyTab = (tab) => {
+          chrome.tabs
+            .sendMessage(tab.id, {
+              type: "CONFIG_UPDATED",
+              apiBaseUrl: cleanUrl,
+              enabled: isEnabled,
+            })
+            .catch(() => {});
+        };
+
+        chrome.tabs.query(
+          { url: ["*://*.x.com/*", "*://*.twitter.com/*"] },
+          (tabs) => {
+            if (tabs && tabs.length > 0) {
+              tabs.forEach(notifyTab);
+            } else {
+              // Fallback query across all tabs if URL pattern matching is restricted
+              chrome.tabs.query({}, (fallbackTabs) => {
+                for (const tab of fallbackTabs || []) {
+                  if (
+                    tab.url &&
+                    /^https?:\/\/(?:[^/]+\.)?(?:x\.com|twitter\.com)(?:\/|$)/i.test(
+                      tab.url,
+                    )
+                  ) {
+                    notifyTab(tab);
+                  }
+                }
+              });
             }
-          }
-        });
+          },
+        );
       }
 
       saveBtn.innerText = "Saved & Applied!";
