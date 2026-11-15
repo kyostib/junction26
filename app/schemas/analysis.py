@@ -23,7 +23,7 @@ class AnalysisResponse(BaseModel):
 
 # Schemas for Chrome Extension & Overlay API
 class FlagItem(BaseModel):
-    type: str  # "falsehood", "spam", "harm"
+    type: str  # "falsehood", "spam", "harm", "propaganda"
     summary: str
     assessment: str
     evidence_url: str | None = None

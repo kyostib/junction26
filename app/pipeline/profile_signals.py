@@ -37,7 +37,13 @@ def normalize_propaganda(raw: object, posts: list) -> list[dict]:
             score = 0.0
         examples = []
         seen = set()
-        for example in item.get("examples", []) if isinstance(item.get("examples", []), list) else []:
+        raw_examples = item.get("examples")
+        if not isinstance(raw_examples, list):
+            if item.get("post_id") and item.get("matched_text"):
+                raw_examples = [{"post_id": item.get("post_id"), "matched_text": item.get("matched_text"), "reason": item.get("reason", "")}]
+            else:
+                raw_examples = []
+        for example in raw_examples:
             if not isinstance(example, dict):
                 continue
             post_id = str(example.get("post_id", ""))

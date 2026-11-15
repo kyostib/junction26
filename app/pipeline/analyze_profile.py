@@ -95,12 +95,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
 
         llm = get_llm_provider()
 
-        # 1 & 2. Concurrently scrape external links from posts, extract claims, and evaluate rhetoric/propaganda
+        # 1 & 2. Concurrently scrape external links from posts and extract claims
         links_to_scrape = list(link_sources.items())[:6]
-        scraped_links, claims, propaganda_profile = await asyncio.gather(
+        scraped_links, claims = await asyncio.gather(
             asyncio.gather(*(scrape_link_with_source(u, s) for u, s in links_to_scrape)),
             extract_claims(posts, llm),
-            llm.evaluate_propaganda(posts),
         )
 
         # Attach expanded link details back to the corresponding posts
@@ -201,11 +200,11 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         )
 
         dims = synthesis.get("dimensions", {})
-        propaganda_score = round(
-            max((float(item.get("score", 0.0)) for item in propaganda_profile.get("techniques", [])), default=0.0) * 100,
-            1,
-        )
+        propaganda_score = round(max(0.0, min(100.0, float(dims.get("propaganda", 0.0)))), 1)
         dims["propaganda"] = propaganda_score
+        propaganda_profile = synthesis.get("propaganda_profile", [])
+        propaganda_analysis_status = synthesis.get("propaganda_analysis_status", "analyzed")
+
         bs_index = compute_bs_index(
             float(dims.get("falsehood", 0.0)),
             float(dims.get("spam", 0.0)),
@@ -257,8 +256,8 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                 for item in posts
             ],
             "scraped_links": filtered_scraped_links,
-            "propaganda_profile": propaganda_profile.get("techniques", []),
-            "propaganda_analysis_status": propaganda_profile.get("status", "unavailable"),
+            "propaganda_profile": propaganda_profile,
+            "propaganda_analysis_status": propaganda_analysis_status,
             "claim_evidence_breakdown": summarize_claim_evidence(claim_results, len(claims)),
             "scraped_links_count": len(filtered_scraped_links),
             "source_mode": "Context.dev Search & Scrape Gateway",
