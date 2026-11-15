@@ -6,6 +6,7 @@ class Stance(StrEnum):
     supports = "supports"
     contradicts = "contradicts"
     partially_supports = "partially_supports"
+    unverified = "unverified"
     context_only = "context_only"
     irrelevant = "irrelevant"
 

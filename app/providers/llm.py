@@ -210,7 +210,7 @@ class GeminiLLMProvider:
             "Return a JSON object with this exact schema:\n"
             "{\n"
             '  "accuracy": float between -1.0 (completely false/contradicted) and 1.0 (completely true/supported),\n'
-            '  "verification_status": "supported" | "contradicted" | "partially_supported" | "uncertain",\n'
+            '  "verification_status": "supported" | "contradicted" | "partially_supported" | "unverified",\n'
             '  "reason": string (short 1-2 sentence explanation of whether evidence backs the claim),\n'
             '  "sensationalism": float between 0.0 and 1.0\n'
             "}"
@@ -220,12 +220,21 @@ class GeminiLLMProvider:
             res = await self._generate_json(prompt)
             if isinstance(res, dict) and "accuracy" in res:
                 avg_quality = sum(e.source_quality for e in evidence) / len(evidence)
+                raw_status = str(res.get("verification_status", "unverified")).lower().strip()
+                if "support" in raw_status and "partial" not in raw_status:
+                    status = "supported"
+                elif any(k in raw_status for k in ("contradict", "refut", "false")):
+                    status = "contradicted"
+                elif any(k in raw_status for k in ("partial", "missing")):
+                    status = "partially_supported"
+                else:
+                    status = "unverified"
                 return EvidenceEvaluation(
                     accuracy=float(res.get("accuracy", 0.0)),
                     evidence_quality=avg_quality,
                     misleadingness=0.0,
                     sensationalism=float(res.get("sensationalism", 0.0)),
-                    verification_status=str(res.get("verification_status", "uncertain")),
+                    verification_status=status,
                     reason=str(res.get("reason", "Evaluated via Gemini and Context.dev sources.")),
                 )
         except Exception as e:
@@ -583,8 +592,8 @@ class DemoLLMProvider:
             status = "partially_supported"
             reason = "Evidence partially supports the statement, but nuances or key caveats were omitted."
         else:
-            status = "uncertain"
-            reason = "Evidence is inconclusive or mixed across sources."
+            status = "unverified"
+            reason = "Evidence is inconclusive or insufficient across sources."
 
         misleading = 0.0
         sensationalism = 0.6 if any(x in claim_lower for x in ("unbelievable", "secret", "never seen before", "destroy")) else 0.1
@@ -781,7 +790,7 @@ class DemoLLMProvider:
                     })
 
         # 4. Inspect verified claims & evidence
-        grounded_claims_with_evidence = [c for c in grounded_claims if c.get("assessment") != "uncertain" and c.get("evidence")]
+        grounded_claims_with_evidence = [c for c in grounded_claims if c.get("assessment") not in ("uncertain", "unverified") and c.get("evidence")]
         if grounded_claims_with_evidence:
             accuracies = [float(c.get("accuracy", 0.0)) for c in grounded_claims_with_evidence]
             avg_accuracy = sum(accuracies) / len(accuracies)

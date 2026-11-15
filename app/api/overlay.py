@@ -105,7 +105,7 @@ async def batch_twitter_overlay(
                     claims_list = [
                         {
                             "claim": f.summary,
-                            "assessment": f.assessment or ("contradicted" if f.type == "falsehood" else "uncertain"),
+                            "assessment": f.assessment or ("contradicted" if f.type == "falsehood" else "unverified"),
                             "reason": f"Signal identified during multi-source web grounding ({f.type}).",
                             "evidence": [
                                 {
