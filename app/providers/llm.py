@@ -595,7 +595,6 @@ class DemoLLMProvider:
             status = "unverified"
             reason = "Evidence is inconclusive or insufficient across sources."
 
-        misleading = 0.0
         sensationalism = 0.6 if any(x in claim_lower for x in ("unbelievable", "secret", "never seen before", "destroy")) else 0.1
 
         avg_quality = sum(e.source_quality for e, _, _ in evaluated_evidence) / len(evaluated_evidence)
@@ -848,7 +847,6 @@ class DemoLLMProvider:
         from app.pipeline.scoring import compute_bs_index
         bs_index = compute_bs_index(falsehood_score, spam_score, harm_score, propaganda_score, sensationalism)
 
-        has_flags = len(top_flags) > 0
         if bs_index <= 30:
             summary = "Profile exhibits high overall factual consistency with no major spam or deceptive signals."
         elif bs_index <= 60:

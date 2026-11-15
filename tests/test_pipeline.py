@@ -754,7 +754,7 @@ async def test_propaganda_queried_and_validated_alongside_other_dimensions():
     assert "misleadingness" not in dims
 
     # Verify all metrics are bounded 0-100 numeric values
-    for metric_name, val in dims.items():
+    for val in dims.values():
         assert isinstance(val, (int, float))
         assert 0.0 <= val <= 100.0
 
@@ -829,7 +829,7 @@ async def test_demo_provider_evaluates_propaganda_heuristics():
 
 
 def test_stance_classification_canonical_names_and_breakdown():
-    from app.pipeline.profile_signals import summarize_claim_evidence, CLAIM_CATEGORIES, normalize_claim_stance
+    from app.pipeline.profile_signals import summarize_claim_evidence
 
     claims = [
         {"claim": "Claim 1", "assessment": "supported", "evidence": [{"source_quality": 0.8}]},
