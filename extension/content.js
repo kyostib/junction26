@@ -45,14 +45,45 @@
     return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${cls}">${inner}</svg>`;
   }
 
-  // Detect whether Twitter / X or system OS is in dark mode
+  // Detect whether Twitter / X or system OS is in dark mode (cached to avoid forced reflows)
+  let cachedTheme = null;
+  let isThemeDirty = true;
+
+  function invalidateTheme() {
+    isThemeDirty = true;
+  }
+
+  if (typeof window !== "undefined" && window.matchMedia) {
+    try {
+      window
+        .matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", invalidateTheme);
+    } catch {}
+  }
+
+  if (typeof MutationObserver !== "undefined") {
+    const themeAttrObserver = new MutationObserver(invalidateTheme);
+    if (document.documentElement) {
+      themeAttrObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["style", "class", "data-color-mode"],
+      });
+    }
+  }
+
   function isDarkMode() {
+    if (!isThemeDirty && cachedTheme !== null) {
+      return cachedTheme === "dark";
+    }
+
+    let isDark = true;
     try {
       const docStyle = document.documentElement.getAttribute("style") || "";
-      if (docStyle.includes("color-scheme: light")) return false;
-      if (docStyle.includes("color-scheme: dark")) return true;
-
-      if (document.body) {
+      if (docStyle.includes("color-scheme: light")) {
+        isDark = false;
+      } else if (docStyle.includes("color-scheme: dark")) {
+        isDark = true;
+      } else if (document.body) {
         const bg = window.getComputedStyle(document.body).backgroundColor;
         const match = bg.match(
           /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/,
@@ -64,21 +95,22 @@
             const g = parseInt(match[2], 10);
             const b = parseInt(match[3], 10);
             const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-            return lum < 128;
+            isDark = lum < 128;
           }
         }
-      }
-
-      if (
+      } else if (
         window.matchMedia &&
         window.matchMedia("(prefers-color-scheme: light)").matches
       ) {
-        return false;
+        isDark = false;
       }
     } catch {
-      // fallback to dark
+      isDark = true;
     }
-    return true;
+
+    cachedTheme = isDark ? "dark" : "light";
+    isThemeDirty = false;
+    return isDark;
   }
 
   function getActiveTheme() {
@@ -94,6 +126,11 @@
   let isOverlayPinned = false;
   let pollingInterval = null;
   let pollAttempts = 0;
+  let lastCheckedHref = "";
+
+  // Content script in-memory cache for evaluated profiles
+  const profileDataCache = new Map();
+  const PROFILE_CACHE_MAX = 100;
 
   console.info(
     `%c[BS Meter] Content script initialized on: ${window.location.href}`,
@@ -200,6 +237,7 @@
           `%c[BS Meter] Real-time config applied: API = ${API_BASE_URL || "(none)"}`,
           "color: #10b981; font-weight: bold;",
         );
+        profileDataCache.clear();
         currentProfileHandle = null;
         removeExistingBadges();
         if (enabled && API_BASE_URL) {
@@ -230,6 +268,7 @@
           `%c[BS Meter] Storage updated: API = ${API_BASE_URL}`,
           "color: #10b981; font-weight: bold;",
         );
+        profileDataCache.clear();
         currentProfileHandle = null;
         removeExistingBadges();
         if (enabled && API_BASE_URL) {
@@ -312,35 +351,29 @@
     );
   }
 
+  const safeHttpUrlCache = new Map();
   function safeHttpUrl(value) {
+    if (!value || typeof value !== "string") return null;
+    if (safeHttpUrlCache.has(value)) return safeHttpUrlCache.get(value);
+    let res = null;
     try {
       const url = new URL(value);
-      return url.protocol === "https:" || url.protocol === "http:"
-        ? url.href
-        : null;
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        res = url.href;
+      }
     } catch {
-      return null;
+      res = null;
     }
+    if (safeHttpUrlCache.size > 300) {
+      safeHttpUrlCache.delete(safeHttpUrlCache.keys().next().value);
+    }
+    safeHttpUrlCache.set(value, res);
+    return res;
   }
 
-  const MEDIA_EXTENSIONS = [
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".gif",
-    ".svg",
-    ".bmp",
-    ".ico",
-    ".mp4",
-    ".mov",
-    ".avi",
-    ".webm",
-    ".mkv",
-    ".m4v",
-    ".flv",
-    ".wmv",
-  ];
+  const MEDIA_EXT_REGEX =
+    /\.(jpg|jpeg|png|webp|gif|svg|bmp|ico|mp4|mov|avi|webm|mkv|m4v|flv|wmv)$/i;
+
   const MEDIA_HOSTS = new Set([
     "pbs.twimg.com",
     "video.twimg.com",
@@ -351,6 +384,16 @@
   function isTcoUrl(urlStr) {
     if (!urlStr || typeof urlStr !== "string") return false;
     const clean = urlStr.trim().toLowerCase();
+    if (
+      clean.startsWith("https://t.co/") ||
+      clean.startsWith("http://t.co/") ||
+      clean.startsWith("t.co/") ||
+      clean === "t.co" ||
+      clean === "https://t.co" ||
+      clean === "http://t.co"
+    ) {
+      return true;
+    }
     try {
       const u = new URL(clean.startsWith("http") ? clean : "https://" + clean);
       const host = (u.hostname || "").toLowerCase().replace(/^www\./, "");
@@ -363,46 +406,60 @@
   function normalizeUrlKey(u) {
     if (!u || typeof u !== "string") return "";
     let s = u.trim().toLowerCase();
-    s = s.replace(/^https?:\/\//, "");
-    s = s.replace(/^www\./, "");
-    s = s.replace(/\/+$/, "");
+    if (s.startsWith("https://")) s = s.slice(8);
+    else if (s.startsWith("http://")) s = s.slice(7);
+    if (s.startsWith("www.")) s = s.slice(4);
+    while (s.endsWith("/")) s = s.slice(0, -1);
     return s;
   }
 
+  const externalLinkCache = new Map();
   function isExternalLink(value, username = "") {
     if (!value || typeof value !== "string") return false;
+    const cacheKey = `${username}|${value}`;
+    if (externalLinkCache.has(cacheKey)) return externalLinkCache.get(cacheKey);
+
+    let result = false;
     const clean = value.trim();
     try {
       const url = new URL(
         clean.startsWith("http") ? clean : "https://" + clean,
       );
-      if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-      const domain = (url.hostname || "").toLowerCase().replace(/^www\./, "");
-      if (
-        !domain ||
-        domain === "x.com" ||
-        domain === "twitter.com" ||
-        domain === "mobile.twitter.com" ||
-        MEDIA_HOSTS.has(domain)
-      ) {
-        return false;
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        const domain = (url.hostname || "").toLowerCase().replace(/^www\./, "");
+        if (
+          domain &&
+          domain !== "x.com" &&
+          domain !== "twitter.com" &&
+          domain !== "mobile.twitter.com" &&
+          !MEDIA_HOSTS.has(domain)
+        ) {
+          const path = (url.pathname || "").toLowerCase();
+          if (!path.includes("share") && !path.includes("intent")) {
+            const cleanPath = path.split("?")[0].split("#")[0];
+            if (!MEDIA_EXT_REGEX.test(cleanPath)) {
+              const cleanUser = (username || "")
+                .toLowerCase()
+                .replace(/^@/, "");
+              if (
+                !cleanUser ||
+                path.replace(/^\/+/, "").split("/")[0] !== cleanUser
+              ) {
+                result = domain.includes(".");
+              }
+            }
+          }
+        }
       }
-      const path = (url.pathname || "").toLowerCase();
-      if (path.includes("share") || path.includes("intent")) {
-        return false;
-      }
-      const cleanPath = path.split("?")[0].split("#")[0];
-      if (MEDIA_EXTENSIONS.some((ext) => cleanPath.endsWith(ext))) {
-        return false;
-      }
-      const cleanUser = (username || "").toLowerCase().replace(/^@/, "");
-      if (cleanUser && path.replace(/^\/+/, "").split("/")[0] === cleanUser) {
-        return false;
-      }
-      return domain.includes(".");
     } catch {
-      return false;
+      result = false;
     }
+
+    if (externalLinkCache.size > 300) {
+      externalLinkCache.delete(externalLinkCache.keys().next().value);
+    }
+    externalLinkCache.set(cacheKey, result);
+    return result;
   }
 
   function safePercent(value) {
@@ -423,7 +480,8 @@
     }
 
     const overlay = getOrCreateGlobalOverlay();
-    overlay.setAttribute("data-bs-theme", getActiveTheme());
+    const theme = getActiveTheme();
+    overlay.setAttribute("data-bs-theme", theme);
     const level = data.badge_level ? data.badge_level : "pending";
     const score =
       typeof data.bs_index === "number" ? Math.round(data.bs_index) : null;
@@ -435,7 +493,10 @@
     const propaganda = safePercent(dims.propaganda);
     const sensationalism = safePercent(dims.sensationalism);
 
-    overlay.innerHTML = `
+    const renderKey = `${handle}:${score}:${level}:${theme}:${falsehood}:${spam}:${harm}:${propaganda}:${sensationalism}`;
+    if (overlay._renderKey !== renderKey) {
+      overlay._renderKey = renderKey;
+      overlay.innerHTML = `
       <div class="bs-popover-header">
           <span class="bs-popover-score" style="color: ${level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : "#f87171"}">
             BS: ${score}/100
@@ -465,14 +526,15 @@
       </div>
     `;
 
-    const inspectBtn = overlay.querySelector("#bsInspectBtn");
-    if (inspectBtn) {
-      inspectBtn.onclick = (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        hideOverlay(true);
-        openInspectModal(handle, data);
-      };
+      const inspectBtn = overlay.querySelector("#bsInspectBtn");
+      if (inspectBtn) {
+        inspectBtn.onclick = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          hideOverlay(true);
+          openInspectModal(handle, data);
+        };
+      }
     }
 
     overlay.classList.add("visible");
@@ -1438,58 +1500,75 @@
     return null;
   }
 
+  const BUTTON_CANDIDATES_SELECTOR = [
+    // Three dots / More options
+    '[data-testid="userActions"]',
+    'button[aria-label="More"]',
+    'button[aria-label="More options"]',
+    'div[role="button"][aria-label="More"]',
+    'div[role="button"][aria-label="More options"]',
+    // Chat / Direct Message
+    '[data-testid="sendDMFromProfile"]',
+    'a[href*="/messages/"][role="link"]',
+    'div[role="button"][aria-label*="Message"]',
+    'button[aria-label*="Message"]',
+    // Follow / Unfollow
+    '[data-testid$="-follow"]',
+    '[data-testid$="-unfollow"]',
+    '[data-testid="placementTracking"]',
+    '[data-testid="userFollowIndicator"]',
+    // Notification / Subscribe
+    '[data-testid="userFollowNotificationButton"]',
+    '[data-testid="subscribe"]',
+    // Edit Profile (own account)
+    '[data-testid="editProfileButton"]',
+    '[data-testid="ProfileHeader_EditProfile_Button"]',
+    'a[href="/settings/profile"]',
+  ].join(", ");
+
+  let cachedActionsTarget = null;
+
   // Find the profile action buttons row (follow, chat, and three dots buttons)
   function findProfileActionsTarget() {
+    if (
+      cachedActionsTarget &&
+      cachedActionsTarget.container &&
+      cachedActionsTarget.container.isConnected &&
+      (!cachedActionsTarget.referenceNode ||
+        cachedActionsTarget.referenceNode.isConnected)
+    ) {
+      return cachedActionsTarget;
+    }
+
     const root =
       document.querySelector('div[data-testid="primaryColumn"]') || document;
     const tabList = root.querySelector(
       '[role="tablist"], [data-testid="ScrollSnap-List"]',
     );
 
-    const buttonCandidates = [
-      // Three dots / More options
-      '[data-testid="userActions"]',
-      'button[aria-label="More"]',
-      'button[aria-label="More options"]',
-      'div[role="button"][aria-label="More"]',
-      'div[role="button"][aria-label="More options"]',
-      // Chat / Direct Message
-      '[data-testid="sendDMFromProfile"]',
-      'a[href*="/messages/"][role="link"]',
-      'div[role="button"][aria-label*="Message"]',
-      'button[aria-label*="Message"]',
-      // Follow / Unfollow
-      '[data-testid$="-follow"]',
-      '[data-testid$="-unfollow"]',
-      '[data-testid="placementTracking"]',
-      '[data-testid="userFollowIndicator"]',
-      // Notification / Subscribe
-      '[data-testid="userFollowNotificationButton"]',
-      '[data-testid="subscribe"]',
-      // Edit Profile (own account)
-      '[data-testid="editProfileButton"]',
-      '[data-testid="ProfileHeader_EditProfile_Button"]',
-      'a[href="/settings/profile"]',
-    ];
+    const nodeList = root.querySelectorAll(BUTTON_CANDIDATES_SELECTOR);
+    if (!nodeList || nodeList.length === 0) {
+      cachedActionsTarget = null;
+      return null;
+    }
 
     const foundButtons = [];
-    for (const sel of buttonCandidates) {
-      const el = root.querySelector(sel);
-      if (el) {
-        if (tabList) {
-          const isBeforeTabs =
-            (el.compareDocumentPosition(tabList) &
-              Node.DOCUMENT_POSITION_FOLLOWING) !==
-            0;
-          if (!isBeforeTabs) continue;
-        }
-        if (!foundButtons.includes(el)) {
-          foundButtons.push(el);
-        }
+    for (let i = 0; i < nodeList.length; i++) {
+      const el = nodeList[i];
+      if (tabList) {
+        const isBeforeTabs =
+          (el.compareDocumentPosition(tabList) &
+            Node.DOCUMENT_POSITION_FOLLOWING) !==
+          0;
+        if (!isBeforeTabs) continue;
+      }
+      if (!foundButtons.includes(el)) {
+        foundButtons.push(el);
       }
     }
 
     if (foundButtons.length === 0) {
+      cachedActionsTarget = null;
       return null;
     }
 
@@ -1544,7 +1623,8 @@
       }
     }
 
-    return container ? { container, referenceNode } : null;
+    cachedActionsTarget = container ? { container, referenceNode } : null;
+    return cachedActionsTarget;
   }
 
   // Ensure BS score badge matches the exact rendered height and top-left placement of neighboring action buttons
@@ -1579,14 +1659,20 @@
 
     // Match the exact rendered height of the other buttons (typically 32px or 34px)
     const targetHeight = Math.round(btnRect.height);
-    if (targetHeight >= 20 && targetHeight <= 60) {
+    if (
+      targetHeight >= 20 &&
+      targetHeight <= 60 &&
+      badge._lastTargetHeight !== targetHeight
+    ) {
+      badge._lastTargetHeight = targetHeight;
       badge.style.setProperty("height", `${targetHeight}px`, "important");
       badge.style.setProperty("min-height", `${targetHeight}px`, "important");
       badge.style.setProperty("max-height", `${targetHeight}px`, "important");
     }
 
     // Both wrapper and badge are anchored to the TOP-LEFT corner of each flex box
-    if (wrapper) {
+    if (wrapper && !wrapper._hasStaticFlexStyles) {
+      wrapper._hasStaticFlexStyles = true;
       wrapper.style.setProperty("display", "flex", "important");
       wrapper.style.setProperty("flex-direction", "column", "important");
       wrapper.style.setProperty("align-self", "flex-start", "important");
@@ -1600,26 +1686,40 @@
       wrapper.style.setProperty("margin-bottom", "0px", "important");
     }
 
-    badge.style.setProperty("align-self", "flex-start", "important");
-    badge.style.setProperty("margin-top", "0px", "important");
-    badge.style.setProperty("margin-bottom", "0px", "important");
-    badge.style.setProperty("vertical-align", "top", "important");
+    if (!badge._hasStaticFlexStyles) {
+      badge._hasStaticFlexStyles = true;
+      badge.style.setProperty("align-self", "flex-start", "important");
+      badge.style.setProperty("margin-top", "0px", "important");
+      badge.style.setProperty("margin-bottom", "0px", "important");
+      badge.style.setProperty("vertical-align", "top", "important");
+    }
 
     // Dynamic top-edge alignment check: ensure badge.top matches neighboring button.top
     const badgeRect = badge.getBoundingClientRect();
     if (badgeRect && badgeRect.height > 0) {
       const diff = Math.round(btnRect.top - badgeRect.top);
       if (Math.abs(diff) >= 1 && Math.abs(diff) < 40) {
+        if (badge._lastAppliedDiff !== diff) {
+          badge._lastAppliedDiff = diff;
+          if (wrapper) {
+            wrapper.style.setProperty("margin-top", `${diff}px`, "important");
+          } else {
+            badge.style.setProperty("margin-top", `${diff}px`, "important");
+          }
+        }
+      } else if (badge._lastAppliedDiff !== null && Math.abs(diff) < 1) {
+        badge._lastAppliedDiff = null;
         if (wrapper) {
-          wrapper.style.setProperty("margin-top", `${diff}px`, "important");
+          wrapper.style.setProperty("margin-top", "0px", "important");
         } else {
-          badge.style.setProperty("margin-top", `${diff}px`, "important");
+          badge.style.setProperty("margin-top", "0px", "important");
         }
       }
     }
   }
 
   function removeExistingBadges() {
+    cachedActionsTarget = null;
     document
       .querySelectorAll(".bs-meter-badge-wrapper, .bs-meter-profile-badge")
       .forEach((el) => el.remove());
@@ -1638,6 +1738,13 @@
         "[BS Meter] API Address not configured yet. Please open the BS Meter popup and enter your API URL.",
       );
       return null;
+    }
+
+    if (profileDataCache.has(handle)) {
+      const cached = profileDataCache.get(handle);
+      if (cached && cached.status === "ready") {
+        return cached;
+      }
     }
 
     if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
@@ -1676,6 +1783,12 @@
             console.info(
               `[BS Meter] Evaluation for @${handle}: status=${result.status}, score=${result.bs_index}`,
             );
+            if (result.status === "ready") {
+              if (profileDataCache.size >= PROFILE_CACHE_MAX) {
+                profileDataCache.delete(profileDataCache.keys().next().value);
+              }
+              profileDataCache.set(handle, result);
+            }
             return result;
           }
         } else if (response && !response.success) {
@@ -1867,6 +1980,7 @@
 
   function checkCurrentPage() {
     if (!enabled || !isConfigLoaded) return;
+    const currentHref = window.location.href;
     const handle = getProfileHandleFromUrl();
 
     if (!handle) {
@@ -1876,6 +1990,7 @@
         );
         currentProfileHandle = null;
         currentProfileData = null;
+        lastCheckedHref = currentHref;
         removeExistingBadges();
       }
       return;
@@ -1888,6 +2003,7 @@
         "color: #10b981; font-weight: bold; font-size: 14px;",
       );
       currentProfileHandle = handle;
+      lastCheckedHref = currentHref;
       currentProfileData = { status: "queued", badge_level: "pending" };
       removeExistingBadges();
 
@@ -1912,7 +2028,10 @@
           startPolling(handle);
         }
       });
+      return;
     }
+
+    lastCheckedHref = currentHref;
 
     // Reattach or reposition badge if React re-rendered or action buttons loaded
     const badge = document.querySelector(
@@ -2028,9 +2147,28 @@
     });
   }
 
+  // Low-overhead background heartbeat checking for URL changes or detached badges
+  let pageCheckInterval = null;
+  function startPageMonitor() {
+    if (pageCheckInterval) clearInterval(pageCheckInterval);
+    pageCheckInterval = setInterval(() => {
+      if (!enabled || !isConfigLoaded) return;
+      if (window.location.href !== lastCheckedHref) {
+        checkCurrentPage();
+      } else if (currentProfileHandle) {
+        const badge = document.querySelector(
+          `.bs-meter-profile-badge[data-handle="${currentProfileHandle}"]`,
+        );
+        if (!badge || !badge.isConnected) {
+          checkCurrentPage();
+        }
+      }
+    }, 1000);
+  }
+
   // Wait for stored settings to load before starting
   loadConfig().then(() => {
     checkCurrentPage();
-    setInterval(checkCurrentPage, 1000);
+    startPageMonitor();
   });
 })();
