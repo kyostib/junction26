@@ -423,25 +423,6 @@
     const harm = safePercent(dims.harm);
     const propaganda = safePercent(dims.propaganda);
 
-    let flagsHtml = "";
-    if (data.top_flags && data.top_flags.length > 0) {
-      flagsHtml = `
-        <div class="bs-flags-section">
-          <div class="bs-flag-header" style="display:flex; align-items:center; gap:5px;">${lucideIcon("flag", 12)} Flagged Signals:</div>
-          ${data.top_flags
-            .slice(0, 3)
-            .map(
-              (f) => `
-              <div class="bs-flag-item">
-                • <b>${escapeHtml((f.type || "SIGNAL").toUpperCase())}:</b> ${escapeHtml(f.summary)}
-                ${safeHttpUrl(f.evidence_url) ? `<a href="${escapeHtml(safeHttpUrl(f.evidence_url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Source: ${escapeHtml(f.evidence_title || "Context.dev Evidence")}</a>` : ""}
-              </div>`,
-            )
-            .join("")}
-        </div>
-      `;
-    }
-
     overlay.innerHTML = `
       <div class="bs-popover-header">
           <span class="bs-popover-score" style="color: ${level === "low" ? "#10b981" : level === "medium" ? "#f59e0b" : "#f87171"}">
@@ -455,20 +436,18 @@
         
       </div>
       <div>
-        <div class="bs-metric-row"><span>Falsehoods / Claims:</span><span>${Math.round(falsehood)}%</span></div>
+        <div class="bs-metric-row"><span>Falsehoods / Claims:</span><span>${Math.round(falsehood)}</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${falsehood}%; background:#38bdf8;"></div></div>
 
-        <div class="bs-metric-row"><span>Spam & Scams:</span><span>${Math.round(spam)}%</span></div>
+        <div class="bs-metric-row"><span>Spam & Scams:</span><span>${Math.round(spam)}</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${spam}%; background:#f59e0b;"></div></div>
 
-        <div class="bs-metric-row"><span>Harm & Toxicity:</span><span>${Math.round(harm)}%</span></div>
+        <div class="bs-metric-row"><span>Harm & Toxicity:</span><span>${Math.round(harm)}</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${harm}%; background:#f87171;"></div></div>
 
-        <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(propaganda)}%</span></div>
+        <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(propaganda)}</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${propaganda}%; background:#a855f7;"></div></div>
       </div>
-      ${flagsHtml}
-      
     `;
 
     const inspectBtn = overlay.querySelector("#bsInspectBtn");
@@ -758,16 +737,16 @@
       <div class="bs-inspect-section">
         <div class="bs-section-title">${lucideIcon("sliders", 14)} Dimensions of BS</div>
         <div class="bs-inspect-card" style="margin-bottom:10px;">
-          <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}%</span></div>
+          <div class="bs-metric-row"><span>Falsehood & Deception:</span><span>${Math.round(safePercent(dims.falsehood))}</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.falsehood)}%; background:#38bdf8;"></div></div>
 
-          <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))}%</span></div>
+          <div class="bs-metric-row"><span>Spam, Phishing & Scams:</span><span>${Math.round(safePercent(dims.spam))}</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.spam)}%; background:#f59e0b;"></div></div>
 
-          <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}%</span></div>
+          <div class="bs-metric-row"><span>Toxicity & Harm:</span><span>${Math.round(safePercent(dims.harm))}</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.harm)}%; background:#f87171;"></div></div>
 
-          <div class="bs-metric-row"><span>Propaganda & Rhetoric:</span><span>${Math.round(safePercent(propagandaScore))}%</span></div>
+          <div class="bs-metric-row"><span>Propaganda & Rhetoric:</span><span>${Math.round(safePercent(propagandaScore))}</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(propagandaScore)}%; background:#a855f7;"></div></div>
         </div>
         <div class="bs-inspect-card">

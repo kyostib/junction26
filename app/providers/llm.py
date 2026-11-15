@@ -212,7 +212,6 @@ class GeminiLLMProvider:
             '  "accuracy": float between -1.0 (completely false/contradicted) and 1.0 (completely true/supported),\n'
             '  "verification_status": "supported" | "contradicted" | "partially_supported" | "uncertain",\n'
             '  "reason": string (short 1-2 sentence explanation of whether evidence backs the claim),\n'
-            '  "misleadingness": float between 0.0 and 1.0,\n'
             '  "sensationalism": float between 0.0 and 1.0\n'
             "}"
         )
@@ -224,7 +223,7 @@ class GeminiLLMProvider:
                 return EvidenceEvaluation(
                     accuracy=float(res.get("accuracy", 0.0)),
                     evidence_quality=avg_quality,
-                    misleadingness=float(res.get("misleadingness", 0.0)),
+                    misleadingness=0.0,
                     sensationalism=float(res.get("sensationalism", 0.0)),
                     verification_status=str(res.get("verification_status", "uncertain")),
                     reason=str(res.get("reason", "Evaluated via Gemini and Context.dev sources.")),
@@ -392,14 +391,13 @@ class GeminiLLMProvider:
             f"Uncloaked External Links from Posts ({len(links_summary)}):\n{json.dumps(links_summary, indent=2)}\n\n"
             f"Verified Factual Claims & Evidence ({len(claims_summary)}):\n{json.dumps(claims_summary, indent=2)}\n\n"
             "Task:\n"
-            "1. Score the assessment into these specific dimensions (0.0 to 100.0). The service calculates the overall BS Index from these dimensions:\n"
-            "   - falsehood: Extent to which factual assertions in the sampled posts are contradicted by authoritative evidence or misleadingly framed (0 = truthful/accurate or no false claims, 100 = completely refuted/false). Note: unverified claims lacking clear evidence should NOT be penalized as false.\n"
+            "1. Score each dimension as a normalized value from 0.0 to 100.0 (where 0 is clean/objective and 100 is severe risk/falsehood):\n"
+            "   - falsehood: Extent to which assertions in the sampled posts are contradicted by evidence, misleadingly framed, deceptively cherry-picked, or convey half-truths (0 = truthful, accurate, and contextually honest; 100 = completely false, fabricated, or deceptive). Note: unverified claims lacking clear evidence should NOT be penalized as false.\n"
             "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing destinations uncloaked from post links (0 = clean, 100 = blatant scam).\n"
             "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception in posts (0 = safe, 100 = harmful).\n"
             "   - propaganda: Extent of manipulative rhetoric, fear appeals, loaded framing, scapegoating, or demagoguery in posts (0 = neutral/objective, 100 = pervasive manipulation).\n"
-            "   - evidence_quality: Quality and reliability of sources available (0.0 to 10.0 scale).\n"
-            "   - misleadingness: Degree of cherry-picking, deception, or misleading framing in post texts (0.0 to 10.0 scale).\n"
-            "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype in post texts (0.0 to 10.0 scale).\n"
+            "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype in post texts (0 = sober/objective, 100 = extreme sensationalism).\n"
+            "   - evidence_quality: Quality, reliability, and authoritativeness of available grounding sources (0 = no reliable sources, 100 = authoritative consensus).\n"
             "2. Identify any specific propaganda / rhetoric techniques from: fear_appeal, scapegoating, false_dilemma, loaded_language, cherry_picking, repetition, us_vs_them, name_calling, whataboutism, flag_waving, bandwagon.\n"
             "3. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
             "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams, harm, or propaganda issues in posts.\n\n"
@@ -410,9 +408,8 @@ class GeminiLLMProvider:
             '    "spam": float between 0.0 and 100.0,\n'
             '    "harm": float between 0.0 and 100.0,\n'
             '    "propaganda": float between 0.0 and 100.0,\n'
-            '    "evidence_quality": float between 0.0 and 10.0,\n'
-            '    "misleadingness": float between 0.0 and 10.0,\n'
-            '    "sensationalism": float between 0.0 and 10.0\n'
+            '    "sensationalism": float between 0.0 and 100.0,\n'
+            '    "evidence_quality": float between 0.0 and 100.0\n'
             "  },\n"
             '  "propaganda_techniques": [\n'
             "    {\n"
@@ -445,6 +442,8 @@ class GeminiLLMProvider:
                 spam = round(max(0.0, min(100.0, float(dims.get("spam", 0.0)))), 1)
                 harm = round(max(0.0, min(100.0, float(dims.get("harm", 0.0)))), 1)
                 propaganda = round(max(0.0, min(100.0, float(dims.get("propaganda", 0.0)))), 1)
+                sensationalism = round(max(0.0, min(100.0, float(dims.get("sensationalism", 0.0)))), 1)
+                evidence_quality = round(max(0.0, min(100.0, float(dims.get("evidence_quality", 50.0)))), 1)
 
                 raw_techniques = res.get("propaganda_techniques", [])
                 normalized_techniques = normalize_propaganda(raw_techniques, posts)
@@ -457,9 +456,8 @@ class GeminiLLMProvider:
                         "spam": spam,
                         "harm": harm,
                         "propaganda": propaganda,
-                        "evidence_quality": round(max(0.0, min(10.0, float(dims.get("evidence_quality", 5.0)))), 1),
-                        "misleadingness": round(max(0.0, min(10.0, float(dims.get("misleadingness", 0.0)))), 1),
-                        "sensationalism": round(max(0.0, min(10.0, float(dims.get("sensationalism", 0.0)))), 1),
+                        "sensationalism": sensationalism,
+                        "evidence_quality": evidence_quality,
                     },
                     "summary": str(res.get("summary", "")),
                     "top_flags": [
@@ -588,14 +586,14 @@ class DemoLLMProvider:
             status = "uncertain"
             reason = "Evidence is inconclusive or mixed across sources."
 
-        misleading = 0.7 if status == "partially_supported" or status == "contradicted" else 0.0
+        misleading = 0.0
         sensationalism = 0.6 if any(x in claim_lower for x in ("unbelievable", "secret", "never seen before", "destroy")) else 0.1
 
         avg_quality = sum(e.source_quality for e, _, _ in evaluated_evidence) / len(evaluated_evidence)
         res = EvidenceEvaluation(
             accuracy=accuracy,
             evidence_quality=avg_quality,
-            misleadingness=misleading,
+            misleadingness=0.0,
             sensationalism=sensationalism,
             verification_status=status,
             reason=reason,
@@ -809,15 +807,14 @@ class DemoLLMProvider:
         harm_score = round(max(0.0, min(100.0, harm_score)), 1)
         propaganda_score = round(max(0.0, min(100.0, propaganda_score)), 1)
 
+        # Evidence quality and sensationalism on normalized 0.0 - 100.0 scale
+        evidence_quality = 85.0 if grounded_claims_with_evidence else 50.0
+        sensationalism = 65.0 if (spam_score > 40 or harm_score > 40 or propaganda_score > 40) else 15.0
+
         from app.pipeline.scoring import compute_bs_index
-        bs_index = compute_bs_index(falsehood_score, spam_score, harm_score, propaganda_score)
+        bs_index = compute_bs_index(falsehood_score, spam_score, harm_score, propaganda_score, sensationalism)
 
-        # Evidence quality, misleadingness, sensationalism
         has_flags = len(top_flags) > 0
-        evidence_quality = 8.5 if grounded_claims_with_evidence else 5.0
-        misleadingness = 7.0 if falsehood_score > 35 else (3.0 if has_flags else 1.0)
-        sensationalism = 6.5 if (spam_score > 40 or harm_score > 40 or propaganda_score > 40) else 1.5
-
         if bs_index <= 30:
             summary = "Profile exhibits high overall factual consistency with no major spam or deceptive signals."
         elif bs_index <= 60:
@@ -840,9 +837,8 @@ class DemoLLMProvider:
                 "spam": spam_score,
                 "harm": harm_score,
                 "propaganda": propaganda_score,
-                "evidence_quality": evidence_quality,
-                "misleadingness": misleadingness,
                 "sensationalism": sensationalism,
+                "evidence_quality": evidence_quality,
             },
             "summary": summary,
             "top_flags": unique_flags[:5],
