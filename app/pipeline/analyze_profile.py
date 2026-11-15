@@ -82,9 +82,6 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         post_by_platform_id = {p.platform_post_id: p for p in persisted_posts}
 
         # 1. Uncloak & inspect external links strictly from recent sampled posts.
-        # Profile bio and images/videos are excluded from consideration.
-        profile_data.bio = ""
-        profile_data.bio_links = []
         link_sources: dict[str, str] = dict(all_post_links)
 
         async def scrape_link_with_source(url: str, src: str) -> dict:
@@ -105,6 +102,28 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             extract_claims(posts, llm),
             llm.evaluate_propaganda(posts),
         )
+
+        # Attach expanded link details back to the corresponding posts
+        expanded_by_url = {}
+        for s in scraped_links:
+            orig_url = s.get("url", "")
+            res_url = s.get("resolved_url") or orig_url
+            domain = s.get("domain") or ""
+            if not is_external_link(res_url, profile.username) or domain.lower().removeprefix("www.") in {"x.com", "twitter.com", "mobile.twitter.com"}:
+                continue
+            expanded_by_url[orig_url] = {
+                "url": orig_url,
+                "resolved_url": res_url,
+                "domain": domain,
+                "title": s.get("title", ""),
+                "description": s.get("description") or (s.get("markdown") or "")[:250],
+            }
+
+        for p_item in posts:
+            p_links = p_item.metadata.get("links", []) if isinstance(p_item.metadata, dict) else []
+            for u in p_links:
+                if u in expanded_by_url and expanded_by_url[u] not in p_item.expanded_links:
+                    p_item.expanded_links.append(expanded_by_url[u])
 
         # Persist claims using unique claim IDs
         claim_rows = {}
@@ -199,14 +218,15 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
         filtered_scraped_links = [
             {
                 "url": l.get("url", ""),
+                "resolved_url": l.get("resolved_url") or l.get("url", ""),
                 "source": l.get("source", "post"),
                 "domain": l.get("domain", ""),
                 "title": l.get("title", ""),
-                "preview": (l.get("markdown") or "")[:250],
+                "preview": (l.get("description") or l.get("markdown") or "")[:250],
                 "error": l.get("error"),
             }
             for l in scraped_links
-            if is_external_link(l.get("url", ""), profile.username)
+            if is_external_link(l.get("resolved_url") or l.get("url", ""), profile.username)
             and l.get("domain", "").lower().removeprefix("www.") not in {"x.com", "twitter.com", "mobile.twitter.com"}
         ]
         result = {
@@ -217,8 +237,8 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
             "dimensions": dims,
             "summary": synthesis.get("summary", ""),
             "top_flags": synthesis.get("top_flags", [])[:5],
-            "bio": "",
-            "bio_links": [],
+            "bio": profile_data.bio,
+            "bio_links": profile_data.bio_links,
             "posts_analyzed": len(posts),
             "max_tweets_configured": max_tweets,
             "factual_claims": sum(getattr(c.claim_type, "value", c.claim_type) == "factual" for c in claims),
@@ -231,6 +251,8 @@ async def analyze_profile(analysis_id: str, session: AsyncSession) -> dict:
                     "text": item.text,
                     "url": str(item.post_url) if item.post_url else f"https://x.com/{profile.username}/status/{item.platform_post_id}",
                     "links": item.metadata.get("links", []) if isinstance(item.metadata, dict) else [],
+                    "expanded_links": item.expanded_links,
+                    "in_reply_to": item.in_reply_to,
                 }
                 for item in posts
             ],

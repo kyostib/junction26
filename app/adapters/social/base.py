@@ -17,6 +17,8 @@ class PostData(BaseModel):
     post_url: str | None = None
     published_at: datetime | None = None
     images: list[str] = []
+    in_reply_to: dict | None = None
+    expanded_links: list[dict] = []
     metadata: dict = {}
 
 

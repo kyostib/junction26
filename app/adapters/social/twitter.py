@@ -59,13 +59,15 @@ class ContextDevTwitterAdapter(SocialProfileAdapter):
             post_id = item.get("id") or f"{username}-{i}"
             text = item.get("text", "")
             links = [l for l in item.get("links", []) if is_external_link(l, username)]
+            in_reply_to = item.get("in_reply_to")
             posts.append(
                 PostData(
                     platform_post_id=post_id,
                     text=text,
                     post_url=f"https://x.com/{username}/status/{post_id}",
                     images=[],
-                    metadata={"links": links},
+                    in_reply_to=in_reply_to,
+                    metadata={"links": links, "in_reply_to": in_reply_to},
                 )
             )
         return posts

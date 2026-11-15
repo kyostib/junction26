@@ -36,6 +36,22 @@ MD_IMAGE_RE = re.compile(r"!\[.*?\]\((https?://[^\s\)]+)\)")
 HTML_IMG_RE = re.compile(r"""<img[^>]+src=["'](https?://[^"']+)["']""", re.IGNORECASE)
 MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)")
 TWEET_AUTHOR_PREFIX_RE = re.compile(r"^[^@\n]+@[a-zA-Z0-9_]+\s*·\s*\w+\s*")
+AUTHOR_LINE_RE = re.compile(
+    r"^(?:(?:\[?[^@\n]+?\]?(?:\([^\)]+\))?)\s+)?@(?P<handle>[a-zA-Z0-9_]{1,30})(?:\s*·\s*(?P<time>.*?))?$",
+    re.IGNORECASE,
+)
+REPLY_LINE_RE = re.compile(r"^Replying to\s+(@[a-zA-Z0-9_]+(?:\s*(?:and|,)\s*@[a-zA-Z0-9_]+)*)", re.IGNORECASE)
+METRICS_JUNK_RE = re.compile(
+    r"^(?:show more|translate post|show this thread|pinned tweet|pinned|"
+    r"[\d,\.kmb]+\s+(?:views|replies|reposts|retweets|likes|quotes|bookmarks)|"
+    r"(?:💬|🔁|❤️|📊|🔖)\s*[\d,\.kmb]*)$",
+    re.IGNORECASE,
+)
+HEADER_NAV_RE = re.compile(
+    r"^(?:joined\s+\w+.*|[\d,\.kmb]+\s+following.*|[\d,\.kmb]+\s+followers.*|"
+    r"(?:posts|replies|highlights|articles|media|likes)(?:\s+(?:posts|replies|highlights|articles|media|likes))*)$",
+    re.IGNORECASE,
+)
 LATEST_TWEETS_SPLIT_RE = re.compile(r"the latest (?:tweets|posts) from [^:]+:\s*", re.IGNORECASE)
 CLEAN_QUERY_MD_RE = re.compile(r"\[([^\]]+)\]\([^\)]+\)")
 CLEAN_QUERY_URL_RE = re.compile(r"https?://\S+")
@@ -90,7 +106,7 @@ def is_external_link(url: str, username: str = "") -> bool:
     try:
         parsed = urlparse(url.strip())
         domain = (parsed.hostname or "").lower().removeprefix("www.")
-        if not domain or domain in TWITTER_DOMAINS:
+        if not domain or any(domain == d or domain.endswith("." + d) for d in TWITTER_DOMAINS):
             return False
         if any(domain == h or domain.endswith("." + h) for h in MEDIA_HOSTS):
             return False
@@ -310,11 +326,19 @@ class ContextDevProvider:
                     text = text.split(" on X: ", 1)[-1].strip('"').strip("'")
 
                 if len(text) > 15 and len(tweets) < max_tweets:
+                    in_reply_to = None
+                    rep_match = re.match(r"^Replying to\s+(@[a-zA-Z0-9_]+):?\s*", text, re.IGNORECASE)
+                    if rep_match:
+                        in_reply_to = {"author": rep_match.group(1), "text": ""}
+                        text = text[rep_match.end():].strip()
+
+                    valid_tweet_links = [l for l in extract_urls(text) if is_external_link(l, username)]
                     tweets.append({
                         "id": f"tweet-{len(tweets)+1}",
                         "text": text,
-                        "links": extract_urls(text),
+                        "links": valid_tweet_links,
                         "images": extract_image_urls(text),
+                        "in_reply_to": in_reply_to,
                     })
 
             logger.info("Context.dev web search retrieved %d public tweets for @%s", len(tweets), username)
@@ -344,7 +368,15 @@ class ContextDevProvider:
         }
 
         if not self.api_key:
-            res = {"url": url, "domain": urlparse(url).hostname or "", "title": "Demo link", "markdown": "Synthetic page content", "is_scam": False}
+            res = {
+                "url": url,
+                "resolved_url": url,
+                "domain": urlparse(url).hostname or "",
+                "title": "Demo link",
+                "description": "Synthetic page description",
+                "markdown": "Synthetic page content",
+                "is_scam": False,
+            }
             log_dev_api_call(provider="context.dev (demo)", operation="client.web.scrape (demo link)", query=query, response=res, status="DEMO")
             return res
 
@@ -363,11 +395,23 @@ class ContextDevProvider:
             response = await asyncio.wait_for(asyncio.to_thread(scrape_sync), timeout=30)
             duration_ms = (time.perf_counter() - start_time) * 1000
             markdown = _extract_markdown(response)
-            title = getattr(response, "title", None) or (response.get("title") if isinstance(response, dict) else "")
+            resolved_url = getattr(response, "url", None) or (response.get("url") if isinstance(response, dict) else url) or url
+            meta = getattr(response, "metadata", None)
+            title = (
+                getattr(meta, "title", None)
+                or getattr(response, "title", None)
+                or (response.get("title") if isinstance(response, dict) else "")
+            )
+            desc = (
+                getattr(meta, "description", None)
+                or (response.get("description") if isinstance(response, dict) else "")
+            )
             res_dict = {
                 "url": url,
-                "domain": urlparse(url).hostname or "",
+                "resolved_url": str(resolved_url),
+                "domain": urlparse(str(resolved_url)).hostname or urlparse(url).hostname or "",
                 "title": str(title or ""),
+                "description": str(desc or ""),
                 "markdown": markdown[:8000],
             }
             log_dev_api_call(
@@ -391,7 +435,7 @@ class ContextDevProvider:
                 error=str(e),
             )
             logger.warning("Context.dev link scrape failed for %s: %s", url, e)
-            return {"url": url, "domain": urlparse(url).hostname or "", "title": "", "markdown": "", "error": str(e)}
+            return {"url": url, "resolved_url": url, "domain": urlparse(url).hostname or "", "title": "", "description": "", "markdown": "", "error": str(e)}
 
     async def research_claim(self, claim: str) -> list[WebEvidence]:
         """Searches authoritative web sources using Context.dev search API."""
@@ -492,16 +536,16 @@ class ContextDevProvider:
 
     def _parse_profile_and_tweets(self, username: str, markdown: str, max_tweets: int = 10) -> tuple[str, list[str], list[dict]]:
         """Parses profile header bio, bio links, and timeline tweets from markdown."""
+        clean_user = username.lstrip("@").strip()
         lines = [line.strip() for line in markdown.split("\n") if line.strip()]
         bio_lines = []
-        tweets = []
-        current_text = []
+        timeline_lines = []
         is_in_timeline = False
 
         skip_keywords = (
             "log in", "sign up", "onboarding", "redirect_after_login",
             "cookies", "privacy policy", "terms of service", "don’t miss what’s happening",
-            "explore", "notifications", "messages", "bookmarks", "lists", "profile", "more",
+            "explore", "notifications", "messages", "bookmarks", "lists", "more",
         )
 
         for line in lines:
@@ -509,48 +553,130 @@ class ContextDevProvider:
             if any(k in lower_line for k in skip_keywords):
                 continue
 
-            # Transition boundary between header and timeline
-            if any(x in lower_line for x in ("following", "followers", "joined ", "highlights", "posts", "replies", "media")):
+            if HEADER_NAV_RE.match(line):
                 is_in_timeline = True
                 continue
 
             # Header / Bio extraction (before timeline begins)
             if not is_in_timeline:
-                if line.startswith("#"):
+                if line.startswith("#") or line.startswith("@") or lower_line in ("follow", "following"):
                     continue
-                if len(line) > 5 and not line.startswith("@"):
+                if len(line) > 5:
                     bio_lines.append(line)
-                    if len(bio_lines) >= 3:
+                    if len(bio_lines) >= 4:
                         is_in_timeline = True
                 continue
 
-            # Tweet extraction (in timeline)
-            if "follow" in lower_line or line.startswith("#"):
+            # Timeline lines
+            if METRICS_JUNK_RE.match(line) or lower_line in ("follow", "following"):
                 continue
-
-            if len(line) > 20:
-                current_text.append(line)
-                if len(current_text) >= 2 or len(line) > 100:
-                    text = " ".join(current_text)
-                    cleaned_text = TWEET_AUTHOR_PREFIX_RE.sub("", text).strip()
-                    if len(cleaned_text) > 15:
-                        links = extract_urls(cleaned_text)
-                        images = extract_image_urls(text)
-                        tweets.append({
-                            "id": f"tweet-{len(tweets)+1}",
-                            "text": cleaned_text,
-                            "links": links,
-                            "images": images,
-                        })
-                    current_text = []
-            if len(tweets) >= max_tweets:
-                break
+            if line.startswith("#") and not line.startswith("# "):
+                continue
+            timeline_lines.append(line)
 
         bio = " ".join(bio_lines).strip()
-        bio_links = [l for l in extract_urls(bio) if is_external_link(l, username)]
+        bio_links = [l for l in extract_urls(bio) if is_external_link(l, clean_user)]
         for _, link in MD_LINK_RE.findall(bio):
-            if link not in bio_links and is_external_link(link, username):
+            if link not in bio_links and is_external_link(link, clean_user):
                 bio_links.append(link)
+
+        # Parse timeline into structured tweet blocks
+        raw_blocks = []
+        current_block = None
+
+        for line in timeline_lines:
+            rep_match = REPLY_LINE_RE.match(line)
+            if rep_match:
+                if current_block is not None:
+                    current_block["reply_target"] = rep_match.group(1)
+                continue
+
+            auth_match = AUTHOR_LINE_RE.match(line)
+            if auth_match and not line.lower().startswith("replying to"):
+                if current_block and (current_block["lines"] or current_block["author"]):
+                    raw_blocks.append(current_block)
+                current_block = {
+                    "author": auth_match.group("handle").lower(),
+                    "time": auth_match.group("time"),
+                    "reply_target": None,
+                    "lines": [],
+                }
+                continue
+
+            if current_block is not None:
+                current_block["lines"].append(line)
+            else:
+                current_block = {
+                    "author": clean_user.lower(),
+                    "time": None,
+                    "reply_target": None,
+                    "lines": [line],
+                }
+
+        if current_block and (current_block["lines"] or current_block["author"]):
+            raw_blocks.append(current_block)
+
+        tweets = []
+        clean_user_lower = clean_user.lower()
+
+        for i, block in enumerate(raw_blocks):
+            block_author = block.get("author") or clean_user_lower
+            if block_author != clean_user_lower:
+                # Parent tweet in a reply thread or quote; kept for context, not a user post
+                continue
+
+            in_reply_to = None
+            if block.get("reply_target"):
+                reply_author = block["reply_target"]
+                parent_text = ""
+                if i > 0 and raw_blocks[i - 1].get("author") != clean_user_lower:
+                    parent_text = " ".join(raw_blocks[i - 1].get("lines", [])).strip()
+                in_reply_to = {"author": reply_author, "text": parent_text}
+            elif i > 0 and raw_blocks[i - 1].get("author") != clean_user_lower:
+                prev = raw_blocks[i - 1]
+                parent_text = " ".join(prev.get("lines", [])).strip()
+                if parent_text:
+                    prev_author = prev.get("author")
+                    in_reply_to = {"author": f"@{prev_author}", "text": parent_text}
+
+            tweet_text = " ".join(block.get("lines", [])).strip()
+            tweet_text = TWEET_AUTHOR_PREFIX_RE.sub("", tweet_text).strip()
+            if len(tweet_text) > 10:
+                links = [l for l in extract_urls(tweet_text) if is_external_link(l, clean_user)]
+                for _, link in MD_LINK_RE.findall(tweet_text):
+                    if link not in links and is_external_link(link, clean_user):
+                        links.append(link)
+                images = extract_image_urls(" ".join(block.get("lines", [])))
+                tweets.append({
+                    "id": f"tweet-{len(tweets)+1}",
+                    "text": tweet_text,
+                    "links": links,
+                    "images": images,
+                    "in_reply_to": in_reply_to,
+                })
+                if len(tweets) >= max_tweets:
+                    break
+
+        # Fallback for unconventional markdown formats without standard author lines
+        if not tweets and timeline_lines:
+            chunk = []
+            for line in timeline_lines:
+                if len(line) > 20:
+                    chunk.append(line)
+                    if len(chunk) >= 2 or len(line) > 100:
+                        text = " ".join(chunk)
+                        cleaned = TWEET_AUTHOR_PREFIX_RE.sub("", text).strip()
+                        if len(cleaned) > 15:
+                            tweets.append({
+                                "id": f"tweet-{len(tweets)+1}",
+                                "text": cleaned,
+                                "links": [l for l in extract_urls(cleaned) if is_external_link(l, clean_user)],
+                                "images": extract_image_urls(text),
+                                "in_reply_to": None,
+                            })
+                        chunk = []
+                        if len(tweets) >= max_tweets:
+                            break
 
         return bio, bio_links, tweets
 
