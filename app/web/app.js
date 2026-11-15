@@ -47,7 +47,7 @@ async function waitForAnalysis(id, handle) {
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 2500));
-    const response = await fetch(`/api/v1/analyses/${encodeURIComponent(id)}`);
+    const response = await fetch(`${API_BASE}/api/v1/analyses/${encodeURIComponent(id)}`);
     if (!response.ok) throw new Error('Could not retrieve the analysis status. Please try again.');
     const analysis = await response.json();
     if (analysis.status === 'completed') return renderResult(analysis, handle);
@@ -64,7 +64,7 @@ form.addEventListener('submit', async event => {
   button.textContent = 'Starting…';
   setStatus('Starting profile scan…');
   try {
-    const response = await fetch('/api/v1/analyses', {
+    const response = await fetch(`${API_BASE}/api/v1/analyses`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({platform: 'twitter', profile_url: input.value.trim()})
