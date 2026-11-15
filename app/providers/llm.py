@@ -400,7 +400,7 @@ class GeminiLLMProvider:
             "   - evidence_quality: Quality, reliability, and authoritativeness of available grounding sources (0 = no reliable sources, 100 = authoritative consensus).\n"
             "2. Identify any specific propaganda / rhetoric techniques from: fear_appeal, scapegoating, false_dilemma, loaded_language, cherry_picking, repetition, us_vs_them, name_calling, whataboutism, flag_waving, bandwagon.\n"
             "3. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
-            "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams, harm, or propaganda issues in posts.\n\n"
+            "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams, harm, propaganda, or sensationalism issues in posts.\n\n"
             "Return a JSON object with this exact schema:\n"
             "{\n"
             '  "dimensions": {\n'
@@ -423,7 +423,7 @@ class GeminiLLMProvider:
             '  "summary": string,\n'
             '  "top_flags": [\n'
             "    {\n"
-            '      "type": "falsehood" | "spam" | "harm" | "propaganda",\n'
+            '      "type": "falsehood" | "spam" | "harm" | "propaganda" | "sensationalism",\n'
             '      "summary": string,\n'
             '      "assessment": string,\n'
             '      "evidence_url": string | null,\n'
@@ -809,7 +809,32 @@ class DemoLLMProvider:
 
         # Evidence quality and sensationalism on normalized 0.0 - 100.0 scale
         evidence_quality = 85.0 if grounded_claims_with_evidence else 50.0
-        sensationalism = 65.0 if (spam_score > 40 or harm_score > 40 or propaganda_score > 40) else 15.0
+
+        sensational_hits = 0
+        sensational_keywords = re.compile(
+            r"\b(shocking|unbelievable|mind-blowing|you won't believe|insane|breaking|destroyed|urgent|viral|disaster)\b|[!]{2,}",
+            re.IGNORECASE,
+        )
+        caps_pattern = re.compile(r"\b[A-Z]{4,}\b")
+        for p in posts:
+            if sensational_keywords.search(p.text) or caps_pattern.search(p.text):
+                sensational_hits += 1
+
+        if spam_score > 40 or harm_score > 40 or propaganda_score > 40:
+            sensationalism = 65.0
+        elif sensational_hits > 0:
+            sensationalism = round(min(100.0, (sensational_hits / total_posts) * 100.0), 1)
+        else:
+            sensationalism = 15.0
+
+        if sensationalism >= 50.0 and len(top_flags) < 5:
+            top_flags.append({
+                "type": "sensationalism",
+                "summary": "Elevated sensationalism, clickbait, or emotional hype in post texts",
+                "assessment": "sensational_framing",
+                "evidence_url": None,
+                "evidence_title": None,
+            })
 
         from app.pipeline.scoring import compute_bs_index
         bs_index = compute_bs_index(falsehood_score, spam_score, harm_score, propaganda_score, sensationalism)

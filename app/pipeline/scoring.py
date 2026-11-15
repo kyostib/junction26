@@ -35,10 +35,10 @@ def compute_bs_index(
     p_clamped = max(0.0, min(100.0, float(propaganda)))
     sens_clamped = max(0.0, min(100.0, float(sensationalism)))
 
-    dominant = max(f_clamped, s_clamped, h_clamped, p_clamped)
-    # Corroborating weighted signal: normalized weights sum to 1.0 (0.35 + 0.25 + 0.20 + 0.15 + 0.05)
+    dominant = max(f_clamped, s_clamped, h_clamped, p_clamped, sens_clamped)
+    # Corroborating weighted signal: normalized weights sum to 1.0 (0.30 + 0.25 + 0.20 + 0.15 + 0.10)
     weighted_signal = (
-        0.35 * f_clamped + 0.25 * s_clamped + 0.20 * h_clamped + 0.15 * p_clamped + 0.05 * sens_clamped
+        0.30 * f_clamped + 0.25 * s_clamped + 0.20 * h_clamped + 0.15 * p_clamped + 0.10 * sens_clamped
     ) / 100.0
     corroboration = min(1.0, weighted_signal) * 0.20
     return round(min(100.0, dominant + (100.0 - dominant) * corroboration), 1)

@@ -422,6 +422,7 @@
     const spam = safePercent(dims.spam);
     const harm = safePercent(dims.harm);
     const propaganda = safePercent(dims.propaganda);
+    const sensationalism = safePercent(dims.sensationalism);
 
     overlay.innerHTML = `
       <div class="bs-popover-header">
@@ -447,6 +448,9 @@
 
         <div class="bs-metric-row"><span>Propaganda:</span><span>${Math.round(propaganda)}</span></div>
         <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${propaganda}%; background:#a855f7;"></div></div>
+
+        <div class="bs-metric-row"><span>Sensationalism:</span><span>${Math.round(sensationalism)}</span></div>
+        <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${sensationalism}%; background:#ec4899;"></div></div>
       </div>
     `;
 
@@ -615,7 +619,7 @@
               )
               .join("");
             return `<div class="bs-profile-signal">
-        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${techniqueScore.toFixed(2)} score · ${count} ${count === 1 ? "post" : "posts"}</span></div>
+        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${count} ${count === 1 ? "post" : "posts"} · ${techniqueScore.toFixed(2)} score</span></div>
         <div class="bs-profile-signal-track"><div style="width:${techniqueScore * 100}%"></div></div>
         <div class="bs-profile-signal-description">${escapeHtml(item.description || "")}</div>
         ${examples}
@@ -748,6 +752,9 @@
 
           <div class="bs-metric-row"><span>Propaganda & Rhetoric:</span><span>${Math.round(safePercent(propagandaScore))}</span></div>
           <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(propagandaScore)}%; background:#a855f7;"></div></div>
+
+          <div class="bs-metric-row"><span>Sensationalism & Clickbait:</span><span>${Math.round(safePercent(dims.sensationalism))}</span></div>
+          <div class="bs-bar-container"><div class="bs-bar-fill" style="width:${safePercent(dims.sensationalism)}%; background:#ec4899;"></div></div>
         </div>
         <div class="bs-inspect-card">
           <div style="font-weight:700; color:var(--bs-text-primary); margin-bottom:6px; font-size:11px; display:flex; align-items:center; gap:6px;">${lucideIcon("flag", 12)} Active Flags:</div>
