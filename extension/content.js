@@ -306,7 +306,10 @@
   };
 
   function escapeHtml(value) {
-    return String(value ?? "").replace(/[&<>'"]/g, (char) => HTML_ESCAPE_MAP[char]);
+    return String(value ?? "").replace(
+      /[&<>'"]/g,
+      (char) => HTML_ESCAPE_MAP[char],
+    );
   }
 
   function safeHttpUrl(value) {
@@ -545,7 +548,11 @@
         className: "bs-stance-supported",
       };
     }
-    if (a.includes("contradict") || a.includes("refut") || a.includes("false")) {
+    if (
+      a.includes("contradict") ||
+      a.includes("refut") ||
+      a.includes("false")
+    ) {
       return {
         key: "contradicted",
         label: "Contradicted",
@@ -762,11 +769,40 @@
     function getFlagMetricColor(type) {
       const key = (type || "").toLowerCase().trim();
       if (metricColorMap[key]) return metricColorMap[key];
-      if (key.includes("falsehood") || key.includes("claim") || key.includes("fact") || key.includes("untruth")) return "#38bdf8";
-      if (key.includes("spam") || key.includes("scam") || key.includes("phish") || key.includes("airdrop")) return "#f59e0b";
-      if (key.includes("harm") || key.includes("toxic") || key.includes("abuse") || key.includes("hate")) return "#f87171";
-      if (key.includes("propaganda") || key.includes("rhetoric") || key.includes("bias") || key.includes("manipulat")) return "#a855f7";
-      if (key.includes("sensational") || key.includes("clickbait") || key.includes("hype")) return "#ec4899";
+      if (
+        key.includes("falsehood") ||
+        key.includes("claim") ||
+        key.includes("fact") ||
+        key.includes("untruth")
+      )
+        return "#38bdf8";
+      if (
+        key.includes("spam") ||
+        key.includes("scam") ||
+        key.includes("phish") ||
+        key.includes("airdrop")
+      )
+        return "#f59e0b";
+      if (
+        key.includes("harm") ||
+        key.includes("toxic") ||
+        key.includes("abuse") ||
+        key.includes("hate")
+      )
+        return "#f87171";
+      if (
+        key.includes("propaganda") ||
+        key.includes("rhetoric") ||
+        key.includes("bias") ||
+        key.includes("manipulat")
+      )
+        return "#a855f7";
+      if (
+        key.includes("sensational") ||
+        key.includes("clickbait") ||
+        key.includes("hype")
+      )
+        return "#ec4899";
       return "var(--bs-text-primary)";
     }
 
@@ -849,7 +885,9 @@
     function getConsideredLinksForPost(p) {
       const considered = [];
       const seenKeys = new Set();
-      const pIdStr = String(p.id || "").trim().toLowerCase();
+      const pIdStr = String(p.id || "")
+        .trim()
+        .toLowerCase();
 
       function resolveActualDestination(item) {
         const raw = item.url || "";
@@ -907,11 +945,7 @@
           );
           domain = (u.hostname || "").toLowerCase().replace(/^www\./, "");
         } catch {
-          domain = (
-            item.domain ||
-            actualUrl.split("/")[2] ||
-            "External"
-          )
+          domain = (item.domain || actualUrl.split("/")[2] || "External")
             .toLowerCase()
             .replace(/^www\./, "");
         }
@@ -931,7 +965,9 @@
 
       // 1. Look in cleanScrapedLinks matching by source or URL
       for (const l of cleanScrapedLinks) {
-        const src = String(l.source || "").toLowerCase().trim();
+        const src = String(l.source || "")
+          .toLowerCase()
+          .trim();
         const isSourceMatch =
           pIdStr &&
           (src === pIdStr ||
@@ -959,8 +995,10 @@
               const lUrlNorm = normalizeUrlKey(l.url);
               const lResNorm = normalizeUrlKey(l.resolved_url);
               return (
-                (elUrlNorm && (elUrlNorm === lUrlNorm || elUrlNorm === lResNorm)) ||
-                (elResNorm && (elResNorm === lUrlNorm || elResNorm === lResNorm))
+                (elUrlNorm &&
+                  (elUrlNorm === lUrlNorm || elUrlNorm === lResNorm)) ||
+                (elResNorm &&
+                  (elResNorm === lUrlNorm || elResNorm === lResNorm))
               );
             }));
 
@@ -998,14 +1036,13 @@
         .map((p, idx) => {
           const postNum = idx + 1;
           const postId = p.id || `${postNum}`;
-          const postUrl =
-            p.url || `https://x.com/${handle}/status/${postId}`;
+          const postUrl = p.url || `https://x.com/${handle}/status/${postId}`;
           const postLinksList = getConsideredLinksForPost(p);
 
           return `
           <div class="bs-post-card">
             <div class="bs-post-header">
-              <span class="bs-post-id-badge">Post #${postNum} · ID: ${escapeHtml(postId)}</span>
+              <span class="bs-post-id-badge">PostID: ${escapeHtml(postId)}</span>
               ${safeHttpUrl(postUrl) ? `<a href="${escapeHtml(safeHttpUrl(postUrl))}" target="_blank" rel="noopener noreferrer" class="bs-post-x-link">View Source ${lucideIcon("external-link", 11)}</a>` : ""}
             </div>
             <div class="bs-post-text">“${escapeHtml(p.text || "")}”</div>
@@ -1018,7 +1055,8 @@
                   .map((l) => {
                     const actualUrl = l.url || l.resolved_url || "";
                     const domain =
-                      l.domain || (actualUrl ? actualUrl.split("/")[2] || "" : "External");
+                      l.domain ||
+                      (actualUrl ? actualUrl.split("/")[2] || "" : "External");
                     const title = l.title || "External Destination Page";
                     const preview = l.preview ? l.preview.trim() : "";
                     const isError = Boolean(l.error);
@@ -1053,8 +1091,7 @@
         const k1 = normalizeUrlKey(l.url || "");
         const k2 = normalizeUrlKey(l.resolved_url || "");
         return (
-          (!k1 || !allMatchedUrls.has(k1)) &&
-          (!k2 || !allMatchedUrls.has(k2))
+          (!k1 || !allMatchedUrls.has(k1)) && (!k2 || !allMatchedUrls.has(k2))
         );
       });
 
@@ -1068,7 +1105,8 @@
                 const actualUrl = l.resolved_url || l.url || "";
                 if (isTcoUrl(actualUrl)) return "";
                 const domain =
-                  l.domain || (actualUrl ? actualUrl.split("/")[2] || "" : "External");
+                  l.domain ||
+                  (actualUrl ? actualUrl.split("/")[2] || "" : "External");
                 const title = l.title || "External Destination Page";
                 const preview =
                   l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");
@@ -1122,7 +1160,8 @@
                 const actualUrl = l.resolved_url || l.url || "";
                 if (isTcoUrl(actualUrl)) return "";
                 const domain =
-                  l.domain || (actualUrl ? actualUrl.split("/")[2] || "" : "External");
+                  l.domain ||
+                  (actualUrl ? actualUrl.split("/")[2] || "" : "External");
                 const title = l.title || "External Destination Page";
                 const preview =
                   l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");

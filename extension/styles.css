@@ -859,7 +859,6 @@
   border: 1px solid var(--bs-status-unverified-border) !important;
 }
 
-
 .bs-claim-reason {
   font-size: 11px !important;
   color: var(--bs-text-secondary) !important;
@@ -1220,10 +1219,10 @@
 
 /* Claim verification breakdown cards with colored numbers */
 .bs-breakdown-chip {
-    display: flex;
-    align-items: center;
-    flex-direction: column;
-    justify-content: space-around;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  justify-content: space-around;
   border-radius: 10px !important;
   padding: 10px 10px !important;
   text-align: center !important;
