@@ -97,7 +97,7 @@ a { color: inherit; }
 .scan-section { padding: 94px 10.5% 104px; background: var(--paper); }
 .section-label { display: flex; align-items: center; gap: 14px; margin-bottom: 43px; color: #777; font: 8px var(--mono); letter-spacing: .12em; }
 .section-label span:first-child { color: var(--blue); }
-.scan-grid { display: grid; grid-template-columns: .88fr 1.12fr; align-items: center; gap: 9%; }
+.scan-grid { display: block; width: min(100%, 1000px); margin: 0 auto; }
 .kicker { color: var(--blue); font: 8px var(--mono); letter-spacing: .12em; }
 .scan-intro h2,
 .about-heading h2 {
@@ -112,23 +112,28 @@ a { color: inherit; }
 .scan-description { max-width: 370px; color: #68686a; font-size: 13px; line-height: 1.8; }
 .scan-footnote { display: flex; align-items: center; gap: 8px; margin-top: 39px; color: #777; font: 7px var(--mono); letter-spacing: .04em; }
 .lime-dot { width: 7px; height: 7px; border-radius: 50%; background: #80ac26; }
-.scan-card { padding: 23px 26px 0; border: 1px solid #e7e5dc; background: #fff; box-shadow: 0 18px 55px #29271b0d; }
+.scan-card { padding: 27px 38px 0; border: 1px solid #e7e5dc; border-top: 4px solid var(--blue); background: #fff; box-shadow: 0 18px 55px #29271b0d; }
 .scan-card-head,
 .scan-card-bottom { display: flex; justify-content: space-between; color: #898989; font: 7px var(--mono); letter-spacing: .1em; }
 .scan-card-head { padding-bottom: 20px; border-bottom: 1px solid #ededea; }
 .scanner-live { margin-left: 13px; color: #6b922c; }
-.scan-card form { padding: 25px 0 22px; }
-.scan-card label { display: block; margin-bottom: 11px; font: 8px var(--mono); letter-spacing: .08em; }
-.input-wrap { display: flex; height: 54px; align-items: center; padding: 4px; border: 1px solid #deded9; }
-.at-sign { padding: 0 12px; color: #aaa; font: 15px var(--mono); }
-.input-wrap input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--ink); font: 11px var(--sans); }
-.input-wrap input::placeholder { color: #9c9c9c; }
-.input-wrap button { height: 100%; padding: 0 16px; border: 0; background: var(--blue); color: white; font: 600 10px var(--sans); cursor: pointer; transition: background .2s; }
+.scan-prompt { display: flex; justify-content: space-between; align-items: flex-end; gap: 25px; padding: 29px 0 22px; }
+.scan-prompt .kicker { margin: 0 0 10px; }
+.scan-prompt h2 { margin: 0; font-size: clamp(27px, 3.3vw, 39px); font-weight: 800; letter-spacing: -.065em; line-height: 1; }
+.scan-prompt > p { max-width: 270px; margin: 0 0 2px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.scan-card form { padding: 0 0 25px; }
+.scan-card label { display: block; margin-bottom: 10px; font: 8px var(--mono); letter-spacing: .08em; }
+.input-wrap { display: flex; height: 76px; align-items: center; padding: 6px; border: 2px solid var(--blue); box-shadow: 0 0 0 4px #2510ef0b; transition: box-shadow .2s; }
+.input-wrap:focus-within { box-shadow: 0 0 0 5px #2510ef20; }
+.link-mark { display: grid; width: 52px; height: 100%; place-items: center; color: var(--blue); font: 22px var(--mono); }
+.input-wrap input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--ink); font: 17px var(--sans); }
+.input-wrap input::placeholder { color: #a1a1a1; }
+.input-wrap button { height: 100%; padding: 0 23px; border: 0; background: var(--blue); color: white; font: 700 12px var(--sans); cursor: pointer; transition: background .2s; }
 .input-wrap button:hover { background: var(--blue-dark); }
 .input-wrap button:disabled { opacity: .65; cursor: wait; }
-.input-wrap button span { margin-left: 12px; color: var(--lime); }
-.form-hint { margin: 11px 0 0; color: #929292; font-size: 9px; }
-.example { padding: 0; border: 0; background: none; color: var(--blue); font: 9px var(--mono); text-decoration: underline; cursor: pointer; }
+.input-wrap button span { margin-left: 17px; color: var(--lime); }
+.form-hint { display: flex; align-items: center; gap: 7px; margin: 12px 0 0; color: #929292; font-size: 10px; }
+.example { padding: 0; border: 0; background: none; color: var(--blue); font: 10px var(--mono); text-decoration: underline; cursor: pointer; }
 .scan-card-bottom { padding: 13px 0; border-top: 1px solid #ededea; }
 .scan-status { margin: 0 0 18px; padding: 13px; background: #f6f5f0; color: #656565; font-size: 10px; line-height: 1.65; }
 .scan-status.error { color: #b23838; }
@@ -175,7 +180,6 @@ footer .mini-brand span { font-size: 15px; }
   .top-note { display: none; }
   .wordmark { margin-top: 130px; font-size: 18.5vw; }
   .scan-section, .about-section { padding-right: 8%; padding-left: 8%; }
-  .scan-grid { gap: 6%; }
   .extension-section { gap: 4%; padding-right: 8%; padding-left: 8%; }
   .extension-mark { font-size: 54px; }
   .extension-link { padding: 12px; font-size: 8px; }
@@ -202,13 +206,14 @@ footer .mini-brand span { font-size: 15px; }
   .hero-bottom span:nth-child(2) { display: none; }
   .scan-section { padding: 65px 6% 73px; }
   .section-label { margin-bottom: 32px; font-size: 7px; }
-  .scan-grid { grid-template-columns: 1fr; gap: 29px; }
-  .scan-intro h2 { margin: 13px 0; font-size: 57px; }
-  .scan-description { font-size: 11px; }
-  .scan-footnote { margin-top: 23px; font-size: 6px; }
-  .scan-card { padding: 18px 15px 0; }
-  .input-wrap { height: 50px; }
-  .input-wrap button { padding: 0 10px; font-size: 9px; }
+  .scan-card { padding: 18px 17px 0; }
+  .scan-prompt { display: block; padding: 23px 0 19px; }
+  .scan-prompt h2 { font-size: 29px; }
+  .scan-prompt > p { margin-top: 10px; font-size: 10px; }
+  .input-wrap { height: 64px; }
+  .link-mark { width: 39px; font-size: 18px; }
+  .input-wrap input { font-size: 13px; }
+  .input-wrap button { padding: 0 11px; font-size: 9px; }
   .input-wrap button span { margin-left: 7px; }
   .about-section { padding: 65px 6% 85px; }
   .about-heading { display: block; }

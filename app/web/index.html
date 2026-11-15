@@ -31,10 +31,11 @@
       <div class="scan-grid">
         <div class="scan-card">
           <div class="scan-card-head"><span>PROFILE SCANNER <span class="scanner-live">● READY</span></span><span>BSM / 01</span></div>
+          <div class="scan-prompt"><div><p class="kicker">GET A CLOSER LOOK</p><h2>Who’s behind the handle?</h2></div><p>Paste a profile link or enter a username to scan recent public posts.</p></div>
           <form id="scan-form">
-            <label for="profile-input">WHO ARE WE LOOKING AT?</label>
-            <div class="input-wrap"><span class="at-sign">@</span><input id="profile-input" name="profile" placeholder="username or x.com/username" autocomplete="off" required><button type="submit" id="scan-button">Analyze <span>↗</span></button></div>
-            <p class="form-hint">Try <button type="button" class="example">@elonmusk</button> or paste a profile link</p>
+            <label for="profile-input">X PROFILE LINK OR USERNAME</label>
+            <div class="input-wrap"><span class="link-mark" aria-hidden="true">↗</span><input id="profile-input" name="profile" placeholder="Paste a link or type @username" autocomplete="off" required><button type="submit" id="scan-button">Scan profile <span>↗</span></button></div>
+            <p class="form-hint">For example: <button type="button" class="example">@elonmusk</button> <span>·</span> No account needed</p>
           </form>
           <div id="scan-status" class="scan-status" role="status" aria-live="polite" hidden></div>
           <div id="scan-result" class="scan-result" hidden></div>
