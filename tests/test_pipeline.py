@@ -772,14 +772,35 @@ async def test_propaganda_queried_and_validated_alongside_other_dimensions():
 def test_compute_bs_index_weights_and_sensationalism():
     from app.pipeline.scoring import compute_bs_index
 
-    # Severity-first: dominant metric sets lower bound
+    # Severity-first: dominant metric sets lower bound across all main dimensions
     assert compute_bs_index(falsehood=90.0, spam=0, harm=0) >= 90.0
     assert compute_bs_index(falsehood=0, spam=85.0, harm=0) >= 85.0
+    assert compute_bs_index(falsehood=0, spam=0, harm=0, propaganda=75.0) >= 75.0
+    assert compute_bs_index(falsehood=0, spam=0, harm=0, propaganda=0, sensationalism=88.0) >= 88.0
 
     # Sensationalism and corroboration
     score_with_sens = compute_bs_index(falsehood=50.0, spam=0, harm=0, propaganda=0, sensationalism=80.0)
     score_without_sens = compute_bs_index(falsehood=50.0, spam=0, harm=0, propaganda=0, sensationalism=0.0)
     assert score_with_sens > score_without_sens
+
+
+@pytest.mark.asyncio
+async def test_demo_provider_detects_sensationalism_and_generates_flags():
+    from app.adapters.social.base import PostData, ProfileData
+    from app.providers.llm import DemoLLMProvider
+
+    llm = DemoLLMProvider()
+    posts = [
+        PostData(platform_post_id="1", text="SHOCKING revelation that will blow your mind!!"),
+        PostData(platform_post_id="2", text="UNBELIEVABLE secret the media won't tell you!!"),
+    ]
+    profile = ProfileData(platform="twitter", username="hype_account", profile_url="https://x.com/hype_account")
+
+    res = await llm.synthesize_analysis(profile, posts, [], [])
+    dims = res["dimensions"]
+    assert "sensationalism" in dims
+    assert dims["sensationalism"] >= 50.0
+    assert any(f["type"] == "sensationalism" for f in res["top_flags"])
 
 
 @pytest.mark.asyncio
