@@ -79,21 +79,50 @@ uvicorn app.main:app --reload
 
 ---
 
-## Chrome Extension Setup
+## Run the Chrome Extension
 
-The Chrome Extension adds inline badges and evidence popovers directly into Twitter/X (`x.com`):
+The extension runs in Chrome on `x.com` and `twitter.com`. It sends profile handles to the BS Meter API; the API and database must be running separately.
 
-1. Open Chrome and navigate to `chrome://extensions`.
-2. Toggle on **"Developer mode"** in the top right.
-3. Click **"Load unpacked"** and select the [`extension/`](extension/) directory from this repository.
-4. Click the extension icon in your Chrome toolbar to configure the Backend API URL (defaults to `http://localhost:8000`).
-5. Open [x.com](https://x.com) and browse your feed. You will see badges appear next to handles:
-   - 🟢 `[✓ 14]` — Low BS / Authentic
-   - 🟡 `[⚠️ 48]` — Caution / Misleading claims
-   - 🔴 `[🚨 78]` — High BS / Contradicted claims or spam links
-   - ⚪ `[⏳ Checking...]` — Currently analyzing via Context.dev
+### 1. Start the API
 
-Hover over any badge to view the breakdown across **Falsehoods**, **Spam**, and **Harm**, along with direct links to the web evidence.
+Choose one:
+
+- **Use the hosted service:** set the extension API address to `https://api.bsmeter.tech` in step 3 below.
+- **Run locally:** start the Docker services using [Quickstart with Docker & PostgreSQL](#quickstart-with-docker--postgresql), then use `http://localhost:8000` as the API address. Confirm `http://localhost:8000/health` returns `{"status":"ok"}`.
+
+For real profile analysis, configure the API's Context.dev key in its `.env` file. The extension can display cached results without it, but new or stale profiles need the analysis providers configured to complete a scan.
+
+### 2. Load the extension in Chrome
+
+1. Clone or download this repository.
+2. In Chrome, open `chrome://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked** and select this repository's [`extension/`](extension/) directory.
+5. Pin **BS Meter** from Chrome's Extensions menu so its settings are easy to open.
+
+### 3. Connect it to the API
+
+1. Click the BS Meter toolbar icon.
+2. Leave **Enable** checked.
+3. In **API Address**, enter one of:
+   - `https://api.bsmeter.tech` for the hosted service.
+   - `http://localhost:8000` for a locally running API.
+4. Click **Save & Apply**. When Chrome asks, allow the extension to access that API address. The status dot should turn green when `/health` responds.
+
+Enter only the API origin; do not append `/api` or a trailing endpoint path.
+
+### 4. Try it on X
+
+Open or refresh [x.com](https://x.com). BS Meter adds a score badge beside recognized profile handles. The first lookup may show a checking indicator while the API queues analysis; completed results are cached for later lookups. Hover a badge to see its breakdown and available evidence links.
+
+Typical badges:
+
+- 🟢 `[✓ 14]` — lower risk signals
+- 🟡 `[⚠️ 48]` — caution
+- 🔴 `[🚨 78]` — higher risk signals
+- ⚪ `[⏳ Checking...]` — analysis queued or in progress
+
+If the extension shows as offline, open the API's `/health` URL in a browser and confirm the API address in the popup matches it. API address changes are applied to already-open X tabs; if a badge does not appear, refresh the X tab and check that **Enable** is on.
 
 ---
 
