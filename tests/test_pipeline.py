@@ -871,4 +871,123 @@ def test_stance_classification_canonical_names_and_breakdown():
     assert claims[5]["assessment"] == "unverified"
 
 
+def test_context_dev_bio_between_photo_and_joined_month_year():
+    from app.providers.context_dev import ContextDevProvider, extract_bio_between_photo_and_joined
+
+    # 1. Exact literal syntax as specified in user request
+    markdown_literal = """
+[Opens profile photo]
+Line 1: AI safety researcher
+Line 2: Working on LLM evaluations & alignment
+[Joined Month YEAR]
+"""
+    bio = extract_bio_between_photo_and_joined(markdown_literal)
+    assert bio == "Line 1: AI safety researcher\nLine 2: Working on LLM evaluations & alignment"
+
+    # 2. Scraped DOM markdown with image link, links in bio, and actual date
+    markdown_scraped = """
+[Back](https://x.com)
+Alice Researcher
+@aliceresearch
+[Opens profile photo](https://pbs.twimg.com/profile_images/123/photo.jpg)
+AI policy & climate scientist.
+Reading [Our Report](https://climate-policy.invalid/report) and https://techpolicy.invalid/brief.
+[Joined October 2017](https://x.com/aliceresearch)
+1,245 Following  18.9K Followers
+Posts  Replies  Highlights  Media
+
+[@aliceresearch](https://x.com/aliceresearch)[Alice][@aliceresearch][1h](https://x.com/aliceresearch/status/123456)
+The EU adopted a law targeting new cars with CO2 emissions from 2035.
+"""
+    provider = ContextDevProvider(api_key="mock-key")
+    bio, bio_links, tweets = provider._parse_profile_and_tweets("aliceresearch", markdown_scraped, max_tweets=5)
+
+    assert "[Opens profile photo]" not in bio
+    assert "[Joined" not in bio
+    assert "Alice Researcher" not in bio
+    assert "@aliceresearch" not in bio
+    assert "AI policy & climate scientist." in bio
+    assert "Reading [Our Report](https://climate-policy.invalid/report) and https://techpolicy.invalid/brief." in bio
+    assert "https://climate-policy.invalid/report" in bio_links
+    assert "https://techpolicy.invalid/brief" in bio_links
+    assert len(tweets) == 1
+    assert "The EU adopted a law targeting new cars" in tweets[0]["text"]
+
+
+def test_context_dev_bio_between_photo_and_joined_empty_and_line_based():
+    from app.providers.context_dev import ContextDevProvider, extract_bio_between_photo_and_joined
+
+    # Empty bio between delimiters
+    empty_md = """
+[Opens profile photo](https://pbs.twimg.com/avatar.jpg)
+[Joined Month YEAR]
+"""
+    assert extract_bio_between_photo_and_joined(empty_md) == ""
+
+    # Line-based timeline with [Opens profile photo] and [Joined Month YEAR]
+    timeline_md = """
+[Opens profile photo]
+Chief AI Architect.
+Building verifiable systems. https://systems.invalid/paper
+[Joined March 2019]
+500 Following  5,200 Followers
+
+Bob @bob · 2h
+First post about decentralized intelligence.
+"""
+    provider = ContextDevProvider(api_key="mock-key")
+    bio, bio_links, tweets = provider._parse_profile_and_tweets("bob", timeline_md, max_tweets=5)
+    assert bio == "Chief AI Architect.\nBuilding verifiable systems. https://systems.invalid/paper"
+    assert "https://systems.invalid/paper" in bio_links
+    assert "[Opens profile photo]" not in bio
+    assert "Joined" not in bio
+    assert len(tweets) == 1
+    assert "First post about decentralized intelligence" in tweets[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_context_dev_twitter_adapter_loads_bio_between_photo_and_joined(monkeypatch):
+    from app.adapters.social.twitter import ContextDevTwitterAdapter
+    from app.providers.context_dev import ContextDevProvider
+
+    mock_markdown = """
+[Opens profile photo](https://pbs.twimg.com/avatar_normal.jpg)
+Independent technology journalist and researcher.
+Latest articles on https://technews.invalid/articles
+[Joined Month YEAR]
+1,000 Following  20,000 Followers
+
+[@techjourno](https://x.com/techjourno)[Tech Journo][@techjourno][3h](https://x.com/techjourno/status/987654)
+New regulation approved today in Brussels.
+"""
+
+    async def fake_scrape_profile(clean_user, max_tweets=10):
+        provider = ContextDevProvider(api_key="mock-key")
+        bio, bio_links, tweets = provider._parse_profile_and_tweets(clean_user, mock_markdown, max_tweets=max_tweets)
+        return {
+            "username": clean_user,
+            "profile_url": f"https://x.com/{clean_user}",
+            "bio": bio,
+            "bio_links": bio_links,
+            "raw_markdown": mock_markdown,
+            "tweets": tweets,
+        }
+
+    provider = ContextDevProvider(api_key="mock-key")
+    monkeypatch.setattr(provider, "scrape_twitter_profile", fake_scrape_profile)
+    adapter = ContextDevTwitterAdapter(provider=provider)
+
+    profile_data = await adapter.fetch_profile("https://x.com/techjourno")
+    assert profile_data.username == "techjourno"
+    assert profile_data.bio == "Independent technology journalist and researcher.\nLatest articles on https://technews.invalid/articles"
+    assert profile_data.bio_links == ["https://technews.invalid/articles"]
+    assert "[Opens profile photo]" not in profile_data.bio
+    assert "Joined" not in profile_data.bio
+
+    posts = await adapter.fetch_posts(profile_data, limit=5)
+    assert len(posts) == 1
+    assert "New regulation approved today" in posts[0].text
+
+
+
 

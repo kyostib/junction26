@@ -34,6 +34,7 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       MAX_CLAIMS_TO_VERIFY: ${MAX_CLAIMS_TO_VERIFY:-5}
+      MAX_TWEETS_TO_ANALYZE: ${MAX_TWEETS_TO_ANALYZE:-10}
     depends_on:
       db:
         condition: service_healthy

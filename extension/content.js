@@ -345,6 +345,27 @@
     "ton.twitter.com",
   ]);
 
+  function isTcoUrl(urlStr) {
+    if (!urlStr || typeof urlStr !== "string") return false;
+    const clean = urlStr.trim().toLowerCase();
+    try {
+      const u = new URL(clean.startsWith("http") ? clean : "https://" + clean);
+      const host = (u.hostname || "").toLowerCase().replace(/^www\./, "");
+      return host === "t.co";
+    } catch {
+      return clean.includes("t.co/");
+    }
+  }
+
+  function normalizeUrlKey(u) {
+    if (!u || typeof u !== "string") return "";
+    let s = u.trim().toLowerCase();
+    s = s.replace(/^https?:\/\//, "");
+    s = s.replace(/^www\./, "");
+    s = s.replace(/\/+$/, "");
+    return s;
+  }
+
   function isExternalLink(value, username = "") {
     if (!value || typeof value !== "string") return false;
     const clean = value.trim();
@@ -578,14 +599,26 @@
 
     // Filter to strictly external links from posts (bio, images, and videos excluded)
     const cleanScrapedLinks = scrapedLinks.filter((l) => {
-      const domain = (l.domain || "").toLowerCase().replace(/^www\./, "");
+      const target = l.resolved_url || l.url || "";
+      let domain = "";
+      try {
+        domain = new URL(
+          target.startsWith("http") ? target : "https://" + target,
+        ).hostname
+          .toLowerCase()
+          .replace(/^www\./, "");
+      } catch {
+        domain = (l.domain || "").toLowerCase().replace(/^www\./, "");
+      }
       if (
         domain === "x.com" ||
         domain === "twitter.com" ||
-        domain === "mobile.twitter.com"
+        domain === "mobile.twitter.com" ||
+        domain === "t.co" ||
+        isTcoUrl(target)
       )
         return false;
-      if (!isExternalLink(l.url, handle)) return false;
+      if (!isExternalLink(target, handle)) return false;
       const title = (l.title || "").toLowerCase();
       if (
         title.includes("share profile") ||
@@ -789,50 +822,286 @@
       </div>
     `;
 
-    // Section 2: Posts Checked HTML
+    // Section 2: Posts Checked & Considered Links HTML (Unified under Posts tab)
+    const allMatchedUrls = new Set();
+
+    // Global map from t.co shortlink keys to actual resolved destinations
+    const tcoToActualMap = new Map();
+    for (const l of scrapedLinks) {
+      const orig = l.orig_url || l.url || "";
+      const res = l.resolved_url || "";
+      if (isTcoUrl(orig) && res && !isTcoUrl(res)) {
+        tcoToActualMap.set(normalizeUrlKey(orig), res);
+      }
+    }
+    for (const p of postsList) {
+      if (Array.isArray(p.expanded_links)) {
+        for (const el of p.expanded_links) {
+          const orig = el.orig_url || el.url || "";
+          const res = el.resolved_url || "";
+          if (isTcoUrl(orig) && res && !isTcoUrl(res)) {
+            tcoToActualMap.set(normalizeUrlKey(orig), res);
+          }
+        }
+      }
+    }
+
+    function getConsideredLinksForPost(p) {
+      const considered = [];
+      const seenKeys = new Set();
+      const pIdStr = String(p.id || "").trim().toLowerCase();
+
+      function resolveActualDestination(item) {
+        const raw = item.url || "";
+        const res = item.resolved_url || "";
+
+        // If res is an actual non-t.co link, that's our target
+        if (res && !isTcoUrl(res)) return res;
+
+        // Check if raw or res is a t.co link mapped to an actual URL
+        const rawNorm = normalizeUrlKey(raw);
+        if (tcoToActualMap.has(rawNorm)) {
+          return tcoToActualMap.get(rawNorm);
+        }
+
+        const resNorm = normalizeUrlKey(res);
+        if (tcoToActualMap.has(resNorm)) {
+          return tcoToActualMap.get(resNorm);
+        }
+
+        // If raw is not t.co, use raw
+        if (raw && !isTcoUrl(raw)) return raw;
+
+        // Otherwise it is an unresolved t.co wrapper; do not display
+        return null;
+      }
+
+      function addLink(item) {
+        const actualUrl = resolveActualDestination(item);
+        if (!actualUrl || isTcoUrl(actualUrl)) {
+          // Do not display t.co wrappers or unresolved t.co links
+          return;
+        }
+
+        const actualKey = normalizeUrlKey(actualUrl);
+        if (!actualKey || seenKeys.has(actualKey)) return;
+
+        // Mark actual URL and all related raw/short URLs as seen to prevent duplicates
+        seenKeys.add(actualKey);
+        allMatchedUrls.add(actualKey);
+        if (item.url) {
+          const rawKey = normalizeUrlKey(item.url);
+          seenKeys.add(rawKey);
+          allMatchedUrls.add(rawKey);
+        }
+        if (item.resolved_url) {
+          const resKey = normalizeUrlKey(item.resolved_url);
+          seenKeys.add(resKey);
+          allMatchedUrls.add(resKey);
+        }
+
+        let domain = "";
+        try {
+          const u = new URL(
+            actualUrl.startsWith("http") ? actualUrl : "https://" + actualUrl,
+          );
+          domain = (u.hostname || "").toLowerCase().replace(/^www\./, "");
+        } catch {
+          domain = (
+            item.domain ||
+            actualUrl.split("/")[2] ||
+            "External"
+          )
+            .toLowerCase()
+            .replace(/^www\./, "");
+        }
+
+        considered.push({
+          url: actualUrl,
+          resolved_url: actualUrl,
+          domain: domain,
+          title:
+            item.title && !item.title.toLowerCase().includes("t.co")
+              ? item.title
+              : "External Destination Page",
+          preview: item.preview || item.description || "",
+          error: item.error || null,
+        });
+      }
+
+      // 1. Look in cleanScrapedLinks matching by source or URL
+      for (const l of cleanScrapedLinks) {
+        const src = String(l.source || "").toLowerCase().trim();
+        const isSourceMatch =
+          pIdStr &&
+          (src === pIdStr ||
+            src === `tweet-${pIdStr}` ||
+            src === `post ${pIdStr}` ||
+            src.endsWith(`-${pIdStr}`) ||
+            src.endsWith(`/${pIdStr}`));
+
+        const isUrlMatch =
+          (Array.isArray(p.links) &&
+            p.links.some((u) => {
+              const uNorm = normalizeUrlKey(u);
+              return (
+                uNorm === normalizeUrlKey(l.url) ||
+                uNorm === normalizeUrlKey(l.resolved_url) ||
+                (tcoToActualMap.has(uNorm) &&
+                  normalizeUrlKey(tcoToActualMap.get(uNorm)) ===
+                    normalizeUrlKey(l.resolved_url || l.url))
+              );
+            })) ||
+          (Array.isArray(p.expanded_links) &&
+            p.expanded_links.some((el) => {
+              const elUrlNorm = normalizeUrlKey(el.url);
+              const elResNorm = normalizeUrlKey(el.resolved_url);
+              const lUrlNorm = normalizeUrlKey(l.url);
+              const lResNorm = normalizeUrlKey(l.resolved_url);
+              return (
+                (elUrlNorm && (elUrlNorm === lUrlNorm || elUrlNorm === lResNorm)) ||
+                (elResNorm && (elResNorm === lUrlNorm || elResNorm === lResNorm))
+              );
+            }));
+
+        if (isSourceMatch || isUrlMatch) {
+          addLink(l);
+        }
+      }
+
+      // 2. Look in p.expanded_links
+      if (Array.isArray(p.expanded_links)) {
+        for (const el of p.expanded_links) {
+          addLink({
+            url: el.url,
+            resolved_url: el.resolved_url,
+            domain: el.domain,
+            title: el.title,
+            description: el.description,
+          });
+        }
+      }
+
+      // 3. Look in p.links
+      if (Array.isArray(p.links)) {
+        for (const u of p.links) {
+          addLink({ url: u, resolved_url: u });
+        }
+      }
+
+      return considered;
+    }
+
     let postsHtml = "";
     if (postsList.length > 0) {
+      const renderedCards = postsList
+        .map((p, idx) => {
+          const postNum = idx + 1;
+          const postId = p.id || `${postNum}`;
+          const postUrl =
+            p.url || `https://x.com/${handle}/status/${postId}`;
+          const postLinksList = getConsideredLinksForPost(p);
+
+          return `
+          <div class="bs-post-card">
+            <div class="bs-post-header">
+              <span class="bs-post-id-badge">Post #${postNum} · ID: ${escapeHtml(postId)}</span>
+              ${safeHttpUrl(postUrl) ? `<a href="${escapeHtml(safeHttpUrl(postUrl))}" target="_blank" rel="noopener noreferrer" class="bs-post-x-link">View Source ${lucideIcon("external-link", 11)}</a>` : ""}
+            </div>
+            <div class="bs-post-text">“${escapeHtml(p.text || "")}”</div>
+            ${
+              postLinksList.length > 0
+                ? `
+              <div class="bs-post-links" style="margin-top:10px; padding-top:8px; border-top:1px dashed var(--bs-border); display:flex; flex-direction:column; gap:6px; align-items:stretch;">
+                <div style="font-size:11px; font-weight:700; color:var(--bs-text-secondary); display:flex; align-items:center; gap:5px;">
+                  ${lucideIcon("link", 12)} Considered Links (${postLinksList.length})
+                </div>
+                ${postLinksList
+                  .map((l) => {
+                    const actualUrl = l.url || l.resolved_url || "";
+                    const domain =
+                      l.domain || (actualUrl ? actualUrl.split("/")[2] || "" : "External");
+                    const title = l.title || "External Destination Page";
+                    const preview = l.preview ? l.preview.trim() : "";
+                    const isError = Boolean(l.error);
+
+                    return `
+                    <div class="bs-link-card" style="margin-bottom:0; background:var(--bs-bg-subcard);">
+                      <div class="bs-link-header">
+                        <div style="display:flex; align-items:center; gap:6px; flex:1; overflow:hidden;">
+                          <span class="bs-link-domain-badge">${escapeHtml(domain)}</span>
+                        </div>
+                        ${safeHttpUrl(actualUrl) ? `<a href="${escapeHtml(safeHttpUrl(actualUrl))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ${lucideIcon("external-link", 11)}</a>` : ""}
+                      </div>
+                      ${title ? `<div class="bs-link-title">${escapeHtml(title)}</div>` : ""}
+                      <div class="bs-link-url-text">${safeHttpUrl(actualUrl) ? escapeHtml(safeHttpUrl(actualUrl)) : escapeHtml(actualUrl)}</div>
+                      ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview)}…”</div>` : ""}
+                      ${isError ? `<div class="bs-link-error-note">${lucideIcon("alert-triangle", 12)} Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
+                    </div>
+                  `;
+                  })
+                  .join("")}
+              </div>
+            `
+                : ""
+            }
+          </div>
+        `;
+        })
+        .join("");
+
+      const unmatchedLinks = cleanScrapedLinks.filter((l) => {
+        const target = l.resolved_url || l.url || "";
+        if (isTcoUrl(target)) return false;
+        const k1 = normalizeUrlKey(l.url || "");
+        const k2 = normalizeUrlKey(l.resolved_url || "");
+        return (
+          (!k1 || !allMatchedUrls.has(k1)) &&
+          (!k2 || !allMatchedUrls.has(k2))
+        );
+      });
+
+      let unmatchedHtml = "";
+      if (unmatchedLinks.length > 0) {
+        unmatchedHtml = `
+          <div class="bs-inspect-section" style="margin-top:16px;">
+            <div class="bs-section-title">${lucideIcon("link", 14)} Other Links Considered (${unmatchedLinks.length})</div>
+            ${unmatchedLinks
+              .map((l) => {
+                const actualUrl = l.resolved_url || l.url || "";
+                if (isTcoUrl(actualUrl)) return "";
+                const domain =
+                  l.domain || (actualUrl ? actualUrl.split("/")[2] || "" : "External");
+                const title = l.title || "External Destination Page";
+                const preview =
+                  l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");
+                const isError = Boolean(l.error);
+
+                return `
+                <div class="bs-link-card">
+                  <div class="bs-link-header">
+                    <div style="display:flex; align-items:center; gap:8px; flex:1; overflow:hidden;">
+                      <span class="bs-link-domain-badge">${escapeHtml(domain)}</span>
+                    </div>
+                    ${safeHttpUrl(actualUrl) ? `<a href="${escapeHtml(safeHttpUrl(actualUrl))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ${lucideIcon("external-link", 11)}</a>` : ""}
+                  </div>
+                  <div class="bs-link-title">${escapeHtml(title)}</div>
+                  <div class="bs-link-url-text">${safeHttpUrl(actualUrl) ? escapeHtml(safeHttpUrl(actualUrl)) : escapeHtml(actualUrl)}</div>
+                  ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview.trim())}…”</div>` : ""}
+                  ${isError ? `<div class="bs-link-error-note">${lucideIcon("alert-triangle", 12)} Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
+                </div>
+              `;
+              })
+              .join("")}
+          </div>
+        `;
+      }
+
       postsHtml = `
         <div class="bs-inspect-section">
           <div class="bs-section-title">${lucideIcon("message-square", 14)} Posts Reviewed (${postsList.length})</div>
-          ${postsList
-            .map((p, idx) => {
-              const postNum = idx + 1;
-              const postId = p.id || `${postNum}`;
-              const postUrl =
-                p.url || `https://x.com/${handle}/status/${postId}`;
-              const postLinks = p.links || [];
-              const matchedClaims = claims.filter(
-                (c) =>
-                  c.post_id === postId ||
-                  (c.claim &&
-                    p.text &&
-                    p.text
-                      .toLowerCase()
-                      .includes(c.claim.toLowerCase().slice(0, 30))),
-              );
-
-              return `
-              <div class="bs-post-card">
-                <div class="bs-post-header">
-                  <span class="bs-post-id-badge">Post #${postNum} · ID: ${escapeHtml(postId)}</span>
-                  ${safeHttpUrl(postUrl) ? `<a href="${escapeHtml(safeHttpUrl(postUrl))}" target="_blank" rel="noopener noreferrer" class="bs-post-x-link">View Source ${lucideIcon("external-link", 11)}</a>` : ""}
-                </div>
-                <div class="bs-post-text">“${escapeHtml(p.text || "")}”</div>
-                ${
-                  postLinks.length > 0
-                    ? `
-                  <div class="bs-post-links">
-                    <span style="color:var(--bs-text-secondary); font-weight:600;">Embedded Links:</span>
-                    ${postLinks.map((l) => (safeHttpUrl(l) ? `<a href="${escapeHtml(safeHttpUrl(l))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">${escapeHtml(l)}</a>` : escapeHtml(l))).join(" ")}
-                  </div>
-                `
-                    : ""
-                }
-              </div>
-            `;
-            })
-            .join("")}
+          ${renderedCards}
+          ${unmatchedHtml}
         </div>
       `;
     } else {
@@ -846,68 +1115,44 @@
             </div>
           </div>
         </div>
-      `;
-    }
+        ${
+          cleanScrapedLinks.length > 0
+            ? `
+          <div class="bs-inspect-section" style="margin-top:16px;">
+            <div class="bs-section-title">${lucideIcon("link", 14)} Considered Links (${totalExternalLinks})</div>
+            ${cleanScrapedLinks
+              .map((l) => {
+                const actualUrl = l.resolved_url || l.url || "";
+                if (isTcoUrl(actualUrl)) return "";
+                const domain =
+                  l.domain || (actualUrl ? actualUrl.split("/")[2] || "" : "External");
+                const title = l.title || "External Destination Page";
+                const preview =
+                  l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");
+                const isError = Boolean(l.error);
 
-    // Section 3: Links Checked HTML (Strictly external links from sampled posts; bio and media excluded)
-    let uncloakedSectionHtml = "";
-    if (cleanScrapedLinks.length > 0) {
-      uncloakedSectionHtml = `
-        <div class="bs-inspect-section">
-          <div class="bs-section-title">${lucideIcon("link", 14)} Post and Profile Links Analysed (${totalExternalLinks})</div>
-          ${cleanScrapedLinks
-            .map((l) => {
-              const url = l.url || "";
-              const domain =
-                l.domain || (url ? url.split("/")[2] || "" : "External");
-              const source = l.source
-                ? l.source.startsWith("tweet-")
-                  ? `Post ${l.source.replace("tweet-", "")}`
-                  : l.source
-                : "Sampled Post";
-              const title = l.title || "External Destination Page";
-              const preview =
-                l.preview || (l.markdown ? l.markdown.slice(0, 250) : "");
-              const isError = Boolean(l.error);
-
-              return `
-              <div class="bs-link-card">
-                <div class="bs-link-header">
-                  <div style="display:flex; align-items:center; gap:8px; flex:1; overflow:hidden;">
-                    <span class="bs-link-domain-badge">${escapeHtml(domain)}</span>
-                    <span class="bs-link-source-badge">${escapeHtml(source)}</span>
+                return `
+                <div class="bs-link-card">
+                  <div class="bs-link-header">
+                    <div style="display:flex; align-items:center; gap:8px; flex:1; overflow:hidden;">
+                      <span class="bs-link-domain-badge">${escapeHtml(domain)}</span>
+                    </div>
+                    ${safeHttpUrl(actualUrl) ? `<a href="${escapeHtml(safeHttpUrl(actualUrl))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ${lucideIcon("external-link", 11)}</a>` : ""}
                   </div>
-                  ${safeHttpUrl(url) ? `<a href="${escapeHtml(safeHttpUrl(url))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ${lucideIcon("external-link", 11)}</a>` : ""}
+                  <div class="bs-link-title">${escapeHtml(title)}</div>
+                  <div class="bs-link-url-text">${safeHttpUrl(actualUrl) ? escapeHtml(safeHttpUrl(actualUrl)) : escapeHtml(actualUrl)}</div>
+                  ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview.trim())}…”</div>` : ""}
+                  ${isError ? `<div class="bs-link-error-note">${lucideIcon("alert-triangle", 12)} Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
                 </div>
-                <div class="bs-link-title">${escapeHtml(title)}</div>
-                <div class="bs-link-url-text">${safeHttpUrl(url) ? escapeHtml(safeHttpUrl(url)) : escapeHtml(url)}</div>
-                ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview.trim())}…”</div>` : ""}
-                ${isError ? `<div class="bs-link-error-note">${lucideIcon("alert-triangle", 12)} Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
-              </div>
-            `;
-            })
-            .join("")}
-        </div>
-      `;
-    } else {
-      uncloakedSectionHtml = `
-        <div class="bs-inspect-section">
-          <div class="bs-section-title">${lucideIcon("link", 14)} Links Checked</div>
-          <div class="bs-inspect-card">
-            <div class="bs-inspect-card-content" style="color:#10b981; display:flex; align-items:center; gap:6px;">
-              ${lucideIcon("check-circle-2", 13)} No external links, shortened URLs, or commercial landing pages were detected in the sampled posts.
-            </div>
+              `;
+              })
+              .join("")}
           </div>
-        </div>
+        `
+            : ""
+        }
       `;
     }
-
-    const linksHtml = `
-      <div class="bs-inspect-section">
-        
-        ${uncloakedSectionHtml}
-      </div>
-    `;
 
     // Section 4: Claims Verified HTML (Evidence Quality condensed into big colored numbers on top)
     const claimsSectionHtml = `
@@ -980,12 +1225,9 @@
           <button id="bsTabPosts" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
             ${lucideIcon("message-square", 14)} Posts <span class="bs-tab-count">${postsList.length || postsAnalyzed}</span>
           </button>
-          <button id="bsTabLinks" class="bs-tab-btn" role="tab" aria-selected="false" type="button">
-            ${lucideIcon("link", 14)} Links <span class="bs-tab-count">${totalExternalLinks}</span>
-          </button>
         </div>
 
-        <!-- Body with 5 Sections -->
+        <!-- Body with 4 Sections -->
         <div class="bs-modal-body">
           <div id="bsTabContentOverview" style="display:block;">
             ${overviewHtml}
@@ -999,9 +1241,6 @@
           <div id="bsTabContentPosts" style="display:none;">
             ${postsHtml}
           </div>
-          <div id="bsTabContentLinks" style="display:none;">
-            ${linksHtml}
-          </div>
         </div>
       </div>
     `;
@@ -1012,7 +1251,6 @@
       { btnId: "#bsTabPropaganda", contentId: "#bsTabContentPropaganda" },
       { btnId: "#bsTabStances", contentId: "#bsTabContentClaims" },
       { btnId: "#bsTabPosts", contentId: "#bsTabContentPosts" },
-      { btnId: "#bsTabLinks", contentId: "#bsTabContentLinks" },
     ];
 
     function selectTab(targetIndex) {
