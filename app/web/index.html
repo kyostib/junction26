@@ -3,73 +3,65 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f4f3ef">
-  <meta name="description" content="BS Meter checks public X posts for questionable claims, spam, and harmful signals.">
-  <title>BS Meter — read between the posts</title>
+  <meta name="theme-color" content="#2510ef">
+  <meta name="description" content="BS Meter helps you spot questionable claims, spam, and harmful signals in public X profiles.">
+  <title>BS Meter — Decode the noise</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@1,500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/web/styles.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="BS Meter home"><span class="brand-mark">BS<span>•</span></span><span>BS METER</span></a>
-    <nav><a href="#how-it-works">How it works</a><a class="nav-cta" href="#scan">Try a scan <span>↗</span></a></nav>
+    <a class="mini-brand" href="/" aria-label="BS Meter home"><span>BS</span><i>•</i> METER</a>
+    <span class="top-note">A browser extension for a noisier internet</span>
+    <nav><a href="#about">The approach</a><a class="nav-scan" href="#scan">Scan a profile <span>↘</span></a></nav>
   </header>
 
   <main>
     <section class="hero">
-      <div class="hero-copy">
-        <div class="eyebrow"><i></i> A little more signal in your feed</div>
-        <h1>Read between<br>the <em>posts.</em></h1>
-        <p class="intro">A clearer look at the claims, links, and patterns behind an X profile. BS Meter checks public posts for shaky claims, spam, and harmful signals—with evidence you can inspect.</p>
-        <a href="#scan" class="text-link">Check a profile <span>↓</span></a>
+      <div class="hero-kicker"><span class="pulse"></span> READ THE FEED A LITTLE CLOSER <span class="hero-serial">INDEPENDENT SIGNAL CHECK / 001</span></div>
+      <h1 class="wordmark" aria-label="BS Meter"><span>BS</span><span class="dash">—</span><span>METER</span></h1>
+      <div class="hero-lower">
+        <p class="hero-tagline">Helping you identify<br><em>propaganda and bots</em> in your feed.</p>
+        <div class="hero-cta"><p>Context for the claims, links, and patterns behind an X profile. Evidence to explore. You make the call.</p><a href="#scan" class="round-link" aria-label="Scan a profile">↘</a><span>SCROLL TO DECODE</span></div>
       </div>
-      <div class="hero-art" aria-label="Illustration of an analysis score">
-        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-        <div class="star star-a">✳</div><div class="star star-b">✳</div>
-        <div class="score-card">
-          <div class="card-top"><span>PROFILE SCAN</span><span class="live-dot">● LIVE</span></div>
-          <div class="fake-profile"><div class="avatar">✳</div><div><strong>@signal_check</strong><small>Recent public posts</small></div><span class="x-mark">𝕏</span></div>
-          <div class="score-line"><span>BS INDEX</span><span class="score-number">28<span>/100</span></span></div>
-          <div class="meter"><span></span></div>
-          <div class="card-bottom"><span><i class="green-dot"></i> LOWER SIGNAL</span><span>VIEW BREAKDOWN ↗</span></div>
-        </div>
-        <div class="note-chip">Claims checked <b>04</b></div>
-        <div class="note-chip note-chip-two">Evidence linked <b>↗</b></div>
-      </div>
-      <div class="hero-foot"><span>01 — 03</span><span>PUBLIC POSTS. EXPLAINABLE SIGNALS.</span><span>SCROLL TO EXPLORE ↓</span></div>
+      <svg class="scribble hero-scribble" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M8 50 C170 15 270 64 430 34 S730 14 990 31"/><path d="M150 44 C182 38 205 49 198 64 C190 79 153 75 157 59 C159 51 169 48 183 47"/></svg>
+      <div class="hero-bottom"><span>01 — BS METER</span><span>PUBLIC POSTS · EXPLAINABLE SIGNALS</span><span>BUILT FOR X / TWITTER</span></div>
     </section>
 
     <section class="scan-section" id="scan">
-      <div class="section-index">01 / TRY IT</div>
-      <div class="scan-content">
-        <div><div class="eyebrow"><i></i> Start with a profile</div><h2>Curious about<br>someone’s feed?</h2><p>Enter an X handle or profile link. We’ll review recent public posts and show what we find.</p></div>
-        <div class="scan-panel">
+      <div class="section-label"><span>01</span><span>PUT A PROFILE UNDER THE LENS</span></div>
+      <div class="scan-grid">
+        <div class="scan-intro"><p class="kicker">ON-DEMAND PROFILE CHECK</p><h2>Decode<br>the <em>noise.</em></h2><p class="scan-description">Drop in an X handle or profile link. BS Meter reviews a sample of public posts for questionable claims, spam, and harmful signals.</p><div class="scan-footnote"><span class="lime-dot"></span> RECENT POSTS · WEB SOURCES · HUMAN JUDGMENT</div></div>
+        <div class="scan-card">
+          <div class="scan-card-head"><span>PROFILE SCANNER <span class="scanner-live">● READY</span></span><span>BSM / 01</span></div>
           <form id="scan-form">
-            <label for="profile-input">X PROFILE</label>
-            <div class="input-row"><span class="at-sign">@</span><input id="profile-input" name="profile" placeholder="username or x.com/username" autocomplete="off" required><button type="submit" id="scan-button">Scan profile <span>↗</span></button></div>
-            <p class="form-hint">For example: <button type="button" class="example">@elonmusk</button> or an x.com profile link</p>
+            <label for="profile-input">WHO ARE WE LOOKING AT?</label>
+            <div class="input-wrap"><span class="at-sign">@</span><input id="profile-input" name="profile" placeholder="username or x.com/username" autocomplete="off" required><button type="submit" id="scan-button">Analyze <span>↗</span></button></div>
+            <p class="form-hint">Try <button type="button" class="example">@elonmusk</button> or paste a profile link</p>
           </form>
           <div id="scan-status" class="scan-status" role="status" aria-live="polite" hidden></div>
           <div id="scan-result" class="scan-result" hidden></div>
+          <div class="scan-card-bottom"><span>NO ACCOUNT NEEDED</span><span>PUBLIC PROFILES ONLY ↗</span></div>
         </div>
       </div>
     </section>
 
-    <section class="how-section" id="how-it-works">
-      <div class="section-index">02 / THE IDEA</div>
-      <div class="how-heading"><div><div class="eyebrow"><i></i> A second look, with receipts</div><h2>Context matters.<br><em>So does evidence.</em></h2></div><p>BS Meter is an open project that brings profile-level context to X. The browser extension adds a quick score beside handles as you browse; this page lets you run a closer look on demand.</p></div>
+    <section class="about-section" id="about">
+      <div class="section-label"><span>02</span><span>HOW TO READ THE SIGNAL</span></div>
+      <div class="about-heading"><h2>It’s a signal.<br><em>Not a verdict.</em></h2><p>BS Meter brings a little more context to X. The extension puts a quick score beside handles as you browse; here you can take a closer look at one profile and explore the evidence behind the score.</p></div>
       <div class="steps">
-        <article><span>01</span><h3>We look at recent posts</h3><p>Public posts are sampled for factual claims, promotional patterns, and other signals.</p></article>
-        <article><span>02</span><h3>Claims meet context</h3><p>Selected claims are checked against web sources. Links and assessments are surfaced where available.</p></article>
-        <article><span>03</span><h3>You make the call</h3><p>The BS Index is a heuristic, not a verdict. Explore the breakdown and follow the sources yourself.</p></article>
+        <article><span class="step-number">01 / OBSERVE</span><div class="step-icon">◉</div><h3>Look at recent posts</h3><p>We sample public posts for factual claims, promotional patterns, and other signals.</p></article>
+        <article><span class="step-number">02 / CHECK</span><div class="step-icon">↗</div><h3>Bring in context</h3><p>Selected claims are checked against web sources. Available evidence is linked for you.</p></article>
+        <article><span class="step-number">03 / DECIDE</span><div class="step-icon">✳</div><h3>Make up your mind</h3><p>The BS Index is a product heuristic. Follow the sources, weigh the context, decide for yourself.</p></article>
       </div>
+      <svg class="scribble about-scribble" viewBox="0 0 1000 80" preserveAspectRatio="none" aria-hidden="true"><path d="M8 50 C170 15 270 64 430 34 S730 14 990 31"/></svg>
     </section>
 
-    <section class="extension-banner"><div><div class="eyebrow"><i></i> Keep it in your feed</div><h2>Meet the browser extension.</h2><p>See BS Meter badges next to profile handles while browsing X.</p></div><a href="https://github.com/" class="outline-button" id="extension-link">Explore the project <span>↗</span></a></section>
+    <section class="extension-section"><div class="extension-mark">BS<span>—</span>M</div><div class="extension-copy"><p class="kicker">THE EVERYDAY VERSION</p><h2>Take the meter<br>into your feed.</h2><p>Get quick BS Meter badges alongside profile handles while you browse X.</p></div><a href="https://github.com/kyostib/junction26" class="extension-link" id="extension-link">Explore the extension <span>↗</span></a><span class="extension-caption">OPEN SOURCE · MADE FOR CURIOUS MINDS</span></section>
   </main>
-  <footer><a class="brand" href="/"><span class="brand-mark">BS<span>•</span></span><span>BS METER</span></a><span>More context. Better questions.</span><span>© BS METER</span></footer>
+  <footer><a class="mini-brand" href="/"><span>BS</span><i>•</i> METER</a><span>DECODE THE NOISE.</span><span>© BS METER · 2026</span></footer>
   <script src="/web/app.js" defer></script>
 </body>
 </html>
