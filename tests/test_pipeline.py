@@ -828,3 +828,47 @@ async def test_demo_provider_evaluates_propaganda_heuristics():
     assert any(f["type"] == "propaganda" for f in res["top_flags"])
 
 
+def test_stance_classification_canonical_names_and_breakdown():
+    from app.pipeline.profile_signals import summarize_claim_evidence, CLAIM_CATEGORIES, normalize_claim_stance
+
+    claims = [
+        {"claim": "Claim 1", "assessment": "supported", "evidence": [{"source_quality": 0.8}]},
+        {"claim": "Claim 2", "assessment": "contradicted", "evidence": [{"source_quality": 0.7}]},
+        {"claim": "Claim 3", "assessment": "partially_supported", "evidence": [{"source_quality": 0.6}]},
+        {"claim": "Claim 4", "assessment": "missing_context", "evidence": [{"source_quality": 0.5}]},
+        {"claim": "Claim 5", "assessment": "uncertain", "evidence": []},
+        {"claim": "Claim 6", "assessment": "unverified", "evidence": []},
+    ]
+
+    breakdown = summarize_claim_evidence(claims, total_claims=6)
+    categories = {c["key"]: c for c in breakdown["categories"]}
+
+    # Verify canonical keys and labels
+    assert "supported" in categories
+    assert categories["supported"]["label"] == "Supported"
+    assert categories["supported"]["count"] == 1
+
+    assert "contradicted" in categories
+    assert categories["contradicted"]["label"] == "Contradicted"
+    assert categories["contradicted"]["count"] == 1
+
+    assert "partially_supported" in categories
+    assert categories["partially_supported"]["label"] == "Partially Supported"
+    # Claim 3 ("partially_supported") and Claim 4 ("missing_context") both map to partially_supported
+    assert categories["partially_supported"]["count"] == 2
+
+    assert "unverified" in categories
+    assert categories["unverified"]["label"] == "Unverified"
+    # Claim 5 ("uncertain") and Claim 6 ("unverified") both map to unverified
+    assert categories["unverified"]["count"] == 2
+
+    # Verify that claim dictionaries were normalized in-place so claim pills match chips
+    assert claims[0]["assessment"] == "supported"
+    assert claims[1]["assessment"] == "contradicted"
+    assert claims[2]["assessment"] == "partially_supported"
+    assert claims[3]["assessment"] == "partially_supported"
+    assert claims[4]["assessment"] == "unverified"
+    assert claims[5]["assessment"] == "unverified"
+
+
+

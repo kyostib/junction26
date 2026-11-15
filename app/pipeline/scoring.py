@@ -55,7 +55,7 @@ def aggregate(
     grounded_evaluations = [
         (importance, evaluation)
         for importance, evaluation in evaluations
-        if evaluation.evidence_quality > 0 and evaluation.verification_status != "uncertain"
+        if evaluation.evidence_quality > 0 and evaluation.verification_status not in ("uncertain", "unverified")
     ]
     if grounded_evaluations:
         total_weight = 0.0

@@ -515,6 +515,36 @@
     return backdrop;
   }
 
+  function getStanceInfo(rawAssessment) {
+    const a = (rawAssessment || "unverified").toLowerCase().trim();
+    if (a.includes("support") && !a.includes("partial")) {
+      return {
+        key: "supported",
+        label: "Supported",
+        className: "bs-stance-supported",
+      };
+    }
+    if (a.includes("contradict") || a.includes("refut") || a.includes("false")) {
+      return {
+        key: "contradicted",
+        label: "Contradicted",
+        className: "bs-stance-contradicted",
+      };
+    }
+    if (a.includes("partial") || a.includes("missing")) {
+      return {
+        key: "partially_supported",
+        label: "Partially Supported",
+        className: "bs-stance-partially_supported",
+      };
+    }
+    return {
+      key: "unverified",
+      label: "Unverified",
+      className: "bs-stance-unverified",
+    };
+  }
+
   function renderInspectModalContent(backdrop, handle, data) {
     const details = (data && data.details) || {};
     const dims = (data && data.dimensions) || {};
@@ -573,7 +603,7 @@
         claim: f.summary,
         assessment:
           f.assessment ||
-          (f.type === "falsehood" ? "contradicted" : "uncertain"),
+          (f.type === "falsehood" ? "contradicted" : "unverified"),
         reason: `Signal flagged during grounding verification (${f.type || "signal"}).`,
         evidence: f.evidence_url
           ? [
@@ -619,8 +649,8 @@
               )
               .join("");
             return `<div class="bs-profile-signal">
-        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${count} ${count === 1 ? "post" : "posts"} · ${techniqueScore.toFixed(2)} score</span></div>
-        <div class="bs-profile-signal-track"><div style="width:${techniqueScore * 100}%"></div></div>
+        <div class="bs-profile-signal-heading"><b>${escapeHtml(item.name || item.key || "Technique")}</b><span>${techniqueScore} score · ${count} ${count === 1 ? "post" : "posts"}</span></div>
+        <div class="bs-profile-signal-track"><div style="width:${techniqueScore}%;"></div></div>
         <div class="bs-profile-signal-description">${escapeHtml(item.description || "")}</div>
         ${examples}
       </div>`;
@@ -628,60 +658,26 @@
           .join("")
       : `<div class="bs-inspect-card-content">Technique analysis is not available for this report.</div>`;
 
-    const evidenceCategories = evidenceBreakdown.categories || [];
-    function getEvidenceCount(matchKey) {
-      const found = evidenceCategories.find((c) =>
-        (c.label || "").toLowerCase().includes(matchKey),
-      );
-      if (found && typeof found.count === "number") return found.count;
-      return claims.filter((c) => {
-        const a = (c.assessment || "").toLowerCase();
-        if (matchKey === "support")
-          return a.includes("support") && !a.includes("partial");
-        if (matchKey === "contradict")
-          return (
-            a.includes("contradict") ||
-            a.includes("false") ||
-            a.includes("refut")
-          );
-        if (matchKey === "missing")
-          return a.includes("partial") || a.includes("missing");
-        if (matchKey === "unverified")
-          return a.includes("uncertain") || a.includes("unverified");
-        return false;
-      }).length;
-    }
+    // Calculate summary counts directly from the evaluated claims to guarantee exact synchronization
+    let countSupported = 0;
+    let countContradicted = 0;
+    let countPartiallySupported = 0;
+    let countUnverified = 0;
 
-    const countSupported = getEvidenceCount("support");
-    const countContradicted = getEvidenceCount("contradict");
-    const countMissingContext = getEvidenceCount("missing");
-    const countUnverified = getEvidenceCount("unverified");
+    claims.forEach((c) => {
+      const st = getStanceInfo(c.assessment);
+      if (st.key === "supported") countSupported++;
+      else if (st.key === "contradicted") countContradicted++;
+      else if (st.key === "partially_supported") countPartiallySupported++;
+      else countUnverified++;
+    });
 
     // Claims HTML
     let claimsHtml = "";
     if (claims.length > 0) {
       claimsHtml = claims
         .map((c) => {
-          const assessment = (c.assessment || "uncertain").toLowerCase();
-          let stanceClass = "bs-stance-uncertain";
-          if (
-            assessment.includes("support") &&
-            !assessment.includes("partial")
-          ) {
-            stanceClass = "bs-stance-supported";
-          } else if (
-            assessment.includes("contradict") ||
-            assessment.includes("refut") ||
-            assessment.includes("false")
-          ) {
-            stanceClass = "bs-stance-contradicted";
-          } else if (
-            assessment.includes("partial") ||
-            assessment.includes("missing")
-          ) {
-            stanceClass = "bs-stance-partially_supported";
-          }
-
+          const stance = getStanceInfo(c.assessment);
           const sources = c.evidence || [];
           const sourcesHtml = sources
             .slice(0, 3)
@@ -700,7 +696,7 @@
           <div class="bs-claim-card">
             <div class="bs-claim-header">
               <span class="bs-claim-text">“${escapeHtml(c.claim || "")}”</span>
-              <span class="bs-stance-pill ${stanceClass}">${escapeHtml((c.assessment || "uncertain").replace(/_/g, " "))}</span>
+              <span class="bs-stance-pill ${stance.className}">${escapeHtml(stance.label)}</span>
             </div>
             ${c.reason ? `<div class="bs-claim-reason">${escapeHtml(c.reason)}</div>` : ""}
             ${sources.length > 0 ? `<div class="bs-claim-evidence-sources">${sourcesHtml}</div>` : ""}
@@ -896,7 +892,7 @@
     // Section 4: Claims Verified HTML (Evidence Quality condensed into big colored numbers on top)
     const claimsSectionHtml = `
       <div class="bs-inspect-section" style="margin-bottom: 20px;">
-        <div class="bs-section-title">${lucideIcon("pie-chart", 14)} Breakdown (${Number(evidenceBreakdown.total) || claims.length} stances)</div>
+        <div class="bs-section-title">${lucideIcon("pie-chart", 14)} Breakdown (${claims.length} ${claims.length === 1 ? "stance" : "stances"})</div>
         <div class="bs-stat-grid" style="margin-bottom: 0;">
           <div class="bs-breakdown-chip bs-breakdown-chip-supported">
             <div class="bs-breakdown-val">${countSupported}</div>
@@ -906,9 +902,9 @@
             <div class="bs-breakdown-val">${countContradicted}</div>
             <div class="bs-breakdown-lbl">Contradicted</div>
           </div>
-          <div class="bs-breakdown-chip bs-breakdown-chip-missing">
-            <div class="bs-breakdown-val">${countMissingContext}</div>
-            <div class="bs-breakdown-lbl">Missing Context</div>
+          <div class="bs-breakdown-chip bs-breakdown-chip-partially-supported">
+            <div class="bs-breakdown-val">${countPartiallySupported}</div>
+            <div class="bs-breakdown-lbl">Partially Supported</div>
           </div>
           <div class="bs-breakdown-chip bs-breakdown-chip-unverified">
             <div class="bs-breakdown-val">${countUnverified}</div>

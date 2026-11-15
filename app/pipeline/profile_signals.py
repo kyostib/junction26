@@ -14,11 +14,41 @@ TECHNIQUES = (
 
 
 CLAIM_CATEGORIES = {
-    "supported": {"label": "Supported", "description": "Backed by relevant, reliable sources."},
-    "contradicted": {"label": "Contradicted", "description": "Conflicts with reliable evidence."},
-    "missing_context": {"label": "Missing context", "description": "Partially supported or lacks key context."},
-    "unverified": {"label": "Unverified", "description": "Could not be verified with the available evidence."},
+    "supported": {
+        "key": "supported",
+        "label": "Supported",
+        "description": "Backed by relevant, reliable sources.",
+    },
+    "contradicted": {
+        "key": "contradicted",
+        "label": "Contradicted",
+        "description": "Conflicts with reliable evidence.",
+    },
+    "partially_supported": {
+        "key": "partially_supported",
+        "label": "Partially Supported",
+        "description": "Partially backed by evidence, but key caveats or context are omitted.",
+    },
+    "unverified": {
+        "key": "unverified",
+        "label": "Unverified",
+        "description": "Could not be verified with the available evidence.",
+    },
 }
+# Backward compatibility alias
+CLAIM_CATEGORIES["missing_context"] = CLAIM_CATEGORIES["partially_supported"]
+
+
+def normalize_claim_stance(assessment: str | None, evidence: list | None = None) -> str:
+    """Normalize raw evaluation status into canonical stance key: supported, contradicted, partially_supported, or unverified."""
+    a = str(assessment or "unverified").lower().strip()
+    if "support" in a and "partial" not in a:
+        return "supported"
+    if any(k in a for k in ("contradict", "refut", "false")):
+        return "contradicted"
+    if any(k in a for k in ("partial", "missing")):
+        return "partially_supported"
+    return "unverified"
 
 
 def normalize_propaganda(raw: object, posts: list) -> list[dict]:
@@ -67,23 +97,18 @@ def normalize_propaganda(raw: object, posts: list) -> list[dict]:
     return result
 
 
-def summarize_claim_evidence(claims: list[dict], total_claims: int) -> dict:
-    buckets = {key: {**value, "count": 0, "claims": []} for key, value in CLAIM_CATEGORIES.items()}
+def summarize_claim_evidence(claims: list[dict], total_claims: int | None = None) -> dict:
+    canonical_keys = ("supported", "contradicted", "partially_supported", "unverified")
+    buckets = {key: {**CLAIM_CATEGORIES[key], "count": 0, "claims": []} for key in canonical_keys}
     for claim in claims:
-        assessment = str(claim.get("assessment", "uncertain")).lower()
-        evidence = claim.get("evidence") or []
-        if assessment == "supported" and evidence and sum(float(item.get("source_quality", 0)) for item in evidence) / len(evidence) >= 0.5:
-            key = "supported"
-        elif assessment == "contradicted" and evidence:
-            key = "contradicted"
-        elif assessment in {"partially_supported", "partial", "missing_context"} or (assessment == "uncertain" and evidence):
-            key = "missing_context"
-        else:
-            key = "unverified"
+        key = normalize_claim_stance(claim.get("assessment"), claim.get("evidence"))
+        # Standardize the assessment string on the claim dictionary itself so pills match breakdown chips
+        claim["assessment"] = key
         buckets[key]["count"] += 1
         if len(buckets[key]["claims"]) < 3:
-            buckets[key]["claims"].append({"claim": claim.get("claim", ""), "reason": claim.get("reason", ""), "evidence": evidence[:3]})
-    # Claims not selected for research are unverified as well.
-    unverified_extra = max(0, total_claims - len(claims))
-    buckets["unverified"]["count"] += unverified_extra
-    return {"total": total_claims, "categories": list(buckets.values())}
+            buckets[key]["claims"].append({
+                "claim": claim.get("claim", ""),
+                "reason": claim.get("reason", ""),
+                "evidence": (claim.get("evidence") or [])[:3],
+            })
+    return {"total": len(claims), "categories": list(buckets.values())}
