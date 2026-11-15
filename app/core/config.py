@@ -1,6 +1,10 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _ROOT_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -23,7 +27,10 @@ class Settings(BaseSettings):
     def is_prod(self) -> bool:
         return self.environment.lower() == "prod"
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", str(_ENV_FILE)),
+        extra="ignore",
+    )
 
 
 @lru_cache
