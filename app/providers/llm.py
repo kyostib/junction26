@@ -396,25 +396,37 @@ class GeminiLLMProvider:
             "   - falsehood: Extent to which factual assertions in the sampled posts are contradicted by authoritative evidence or misleadingly framed (0 = truthful/accurate or no false claims, 100 = completely refuted/false). Note: unverified claims lacking clear evidence should NOT be penalized as false.\n"
             "   - spam: Scams, fake giveaways, crypto presales/airdrops, phishing destinations uncloaked from post links (0 = clean, 100 = blatant scam).\n"
             "   - harm: Hate speech, harassment, extreme toxicity, dangerous deception in posts (0 = safe, 100 = harmful).\n"
+            "   - propaganda: Extent of manipulative rhetoric, fear appeals, loaded framing, scapegoating, or demagoguery in posts (0 = neutral/objective, 100 = pervasive manipulation).\n"
             "   - evidence_quality: Quality and reliability of sources available (0.0 to 10.0 scale).\n"
             "   - misleadingness: Degree of cherry-picking, deception, or misleading framing in post texts (0.0 to 10.0 scale).\n"
             "   - sensationalism: Exaggerated clickbait, emotional hysteria, or hype in post texts (0.0 to 10.0 scale).\n"
-            "2. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
-            "3. Provide up to 5 top flags highlighting specific falsehoods, spam/scams (from post links or uncloaked pages), or harm issues in posts.\n\n"
+            "2. Identify any specific propaganda / rhetoric techniques from: fear_appeal, scapegoating, false_dilemma, loaded_language, cherry_picking, repetition, us_vs_them, name_calling, whataboutism, flag_waving, bandwagon.\n"
+            "3. Provide an executive summary (1-3 sentences) explaining the verdict.\n"
+            "4. Provide up to 5 top flags highlighting specific falsehoods, spam/scams, harm, or propaganda issues in posts.\n\n"
             "Return a JSON object with this exact schema:\n"
             "{\n"
             '  "dimensions": {\n'
             '    "falsehood": float between 0.0 and 100.0,\n'
             '    "spam": float between 0.0 and 100.0,\n'
             '    "harm": float between 0.0 and 100.0,\n'
+            '    "propaganda": float between 0.0 and 100.0,\n'
             '    "evidence_quality": float between 0.0 and 10.0,\n'
             '    "misleadingness": float between 0.0 and 10.0,\n'
             '    "sensationalism": float between 0.0 and 10.0\n'
             "  },\n"
+            '  "propaganda_techniques": [\n'
+            "    {\n"
+            '      "key": "fear_appeal" | "scapegoating" | "false_dilemma" | "loaded_language" | "cherry_picking" | "repetition" | "us_vs_them" | "name_calling" | "whataboutism" | "flag_waving" | "bandwagon",\n'
+            '      "score": float between 0.0 and 1.0,\n'
+            '      "post_id": string,\n'
+            '      "matched_text": string,\n'
+            '      "reason": string\n'
+            "    }\n"
+            "  ],\n"
             '  "summary": string,\n'
             '  "top_flags": [\n'
             "    {\n"
-            '      "type": "falsehood" | "spam" | "harm",\n'
+            '      "type": "falsehood" | "spam" | "harm" | "propaganda",\n'
             '      "summary": string,\n'
             '      "assessment": string,\n'
             '      "evidence_url": string | null,\n'
@@ -427,18 +439,27 @@ class GeminiLLMProvider:
         try:
             res = await self._generate_json(prompt)
             if isinstance(res, dict) and isinstance(res.get("dimensions"), dict):
+                from app.pipeline.profile_signals import normalize_propaganda
                 dims = res.get("dimensions", {})
-                falsehood = round(float(dims.get("falsehood", 0.0)), 1)
-                spam = round(float(dims.get("spam", 0.0)), 1)
-                harm = round(float(dims.get("harm", 0.0)), 1)
+                falsehood = round(max(0.0, min(100.0, float(dims.get("falsehood", 0.0)))), 1)
+                spam = round(max(0.0, min(100.0, float(dims.get("spam", 0.0)))), 1)
+                harm = round(max(0.0, min(100.0, float(dims.get("harm", 0.0)))), 1)
+                propaganda = round(max(0.0, min(100.0, float(dims.get("propaganda", 0.0)))), 1)
+
+                raw_techniques = res.get("propaganda_techniques", [])
+                normalized_techniques = normalize_propaganda(raw_techniques, posts)
+                if propaganda == 0.0 and any(t.get("score", 0.0) > 0 for t in normalized_techniques):
+                    propaganda = round(max((float(t.get("score", 0.0)) for t in normalized_techniques), default=0.0) * 100, 1)
+
                 return {
                     "dimensions": {
                         "falsehood": falsehood,
                         "spam": spam,
                         "harm": harm,
-                        "evidence_quality": round(float(dims.get("evidence_quality", 5.0)), 1),
-                        "misleadingness": round(float(dims.get("misleadingness", 0.0)), 1),
-                        "sensationalism": round(float(dims.get("sensationalism", 0.0)), 1),
+                        "propaganda": propaganda,
+                        "evidence_quality": round(max(0.0, min(10.0, float(dims.get("evidence_quality", 5.0)))), 1),
+                        "misleadingness": round(max(0.0, min(10.0, float(dims.get("misleadingness", 0.0)))), 1),
+                        "sensationalism": round(max(0.0, min(10.0, float(dims.get("sensationalism", 0.0)))), 1),
                     },
                     "summary": str(res.get("summary", "")),
                     "top_flags": [
@@ -451,6 +472,8 @@ class GeminiLLMProvider:
                         }
                         for f in res.get("top_flags", [])
                     ][:5],
+                    "propaganda_profile": normalized_techniques,
+                    "propaganda_analysis_status": "analyzed",
                 }
         except Exception as e:
             logger.warning("Gemini synthesis analysis failed: %s. Using heuristic fallback.", e)
@@ -462,6 +485,16 @@ TOXIC_PATTERN = re.compile(
     r"\b(kill\s+(?:yourself|them|all|everyone)|die\s+in\s+a\s+fire|hope\s+you\s+die|subhuman|vermin|traitors?|scam\s+them\s+all)\b",
     re.IGNORECASE,
 )
+
+DEMO_RHETORIC_PATTERNS = [
+    ("loaded_language", re.compile(r"\b(destroy the country|bleeding the nation|parasites|corrupt cabal|puppets?|traitors?|scam them all)\b", re.IGNORECASE)),
+    ("false_dilemma", re.compile(r"\b(either you support\b.*?\bor\b|if you(?:'re| are) not with us)\b", re.IGNORECASE)),
+    ("whataboutism", re.compile(r"\b(what about|why criticize\b.*?\b(?:when|while)|why don'?t you talk about)\b", re.IGNORECASE)),
+    ("fear_appeal", re.compile(r"\b(existential threat|destroy our children|catastrophe awaits|end of civilization)\b", re.IGNORECASE)),
+    ("bandwagon", re.compile(r"\b(everyone knows|nobody believes|everyone is already on our side)\b", re.IGNORECASE)),
+    ("flag_waving", re.compile(r"\b(real patriots?|true citizens?|betraying our country)\b", re.IGNORECASE)),
+    ("scapegoating", re.compile(r"\b(it is entirely their fault|blame\b.*?\bfor everything)\b", re.IGNORECASE)),
+]
 
 
 class DemoLLMProvider:
@@ -628,11 +661,21 @@ class DemoLLMProvider:
         return res_spam_harm
 
     async def evaluate_propaganda(self, posts: list[PostData]) -> dict:
-        # The demo provider has no language model; report an empty, correctly
-        # shaped result rather than presenting keyword matches as LLM judgments.
         from app.pipeline.profile_signals import normalize_propaganda
-
-        res_prop = {"status": "unavailable", "techniques": normalize_propaganda([], posts)}
+        detected = []
+        for p in posts:
+            for key, pattern in DEMO_RHETORIC_PATTERNS:
+                m = pattern.search(p.text)
+                if m:
+                    detected.append({
+                        "key": key,
+                        "score": 0.75,
+                        "post_id": str(p.platform_post_id),
+                        "matched_text": m.group(0),
+                        "reason": f"Rhetoric pattern matching '{key.replace('_', ' ')}': '{m.group(0)}'",
+                    })
+        norm = normalize_propaganda(detected, posts)
+        res_prop = {"status": "analyzed", "techniques": norm}
         log_dev_api_call(
             provider="llm (demo)",
             operation="evaluate_propaganda",
@@ -651,6 +694,7 @@ class DemoLLMProvider:
     ) -> dict:
         spam_score = 0.0
         harm_score = 0.0
+        propaganda_score = 0.0
         top_flags: list[dict] = []
 
         # 1. Inspect uncloaked landing pages strictly from post links (bio is excluded)
@@ -680,8 +724,7 @@ class DemoLLMProvider:
                     "evidence_title": link.get("title") or "Affiliate Landing Page",
                 })
 
-        # Bio, images, and videos are excluded from consideration.
-        # 2. Inspect recent posts
+        # 2. Inspect recent posts for spam and harm
         total_posts = len(posts) or 1
         spam_keyword_count = 0
         for p in posts:
@@ -709,6 +752,36 @@ class DemoLLMProvider:
             keyword_spam = min(100.0, (spam_keyword_count / total_posts) * 120.0)
             spam_score = max(spam_score, keyword_spam)
 
+        # 3. Inspect posts for manipulative rhetoric / propaganda
+        detected_techniques = []
+        for p in posts:
+            for key, pattern in DEMO_RHETORIC_PATTERNS:
+                m = pattern.search(p.text)
+                if m:
+                    detected_techniques.append({
+                        "key": key,
+                        "score": 0.75,
+                        "post_id": str(p.platform_post_id),
+                        "matched_text": m.group(0),
+                        "reason": f"Rhetorical pattern matching '{key.replace('_', ' ')}': '{m.group(0)}'",
+                    })
+
+        from app.pipeline.profile_signals import normalize_propaganda
+        normalized_propaganda = normalize_propaganda(detected_techniques, posts)
+        active_propaganda_scores = [float(t.get("score", 0.0)) for t in normalized_propaganda if float(t.get("score", 0.0)) > 0]
+        if active_propaganda_scores:
+            propaganda_score = round(min(100.0, (len(active_propaganda_scores) / total_posts) * 100.0), 1)
+            for t in normalized_propaganda:
+                if t.get("score", 0.0) > 0 and t.get("examples"):
+                    ex = t["examples"][0]
+                    top_flags.append({
+                        "type": "propaganda",
+                        "summary": f"Manipulative rhetoric ({t['name']}): '{ex.get('matched_text', '')}' in post",
+                        "assessment": "rhetoric_technique",
+                        "evidence_url": None,
+                        "evidence_title": None,
+                    })
+
         # 4. Inspect verified claims & evidence
         grounded_claims_with_evidence = [c for c in grounded_claims if c.get("assessment") != "uncertain" and c.get("evidence")]
         if grounded_claims_with_evidence:
@@ -732,17 +805,18 @@ class DemoLLMProvider:
                     "evidence_title": top_ev.get("title") or "Context.dev Fact Check",
                 })
 
-        spam_score = round(min(100.0, spam_score), 1)
-        harm_score = round(min(100.0, harm_score), 1)
+        spam_score = round(max(0.0, min(100.0, spam_score)), 1)
+        harm_score = round(max(0.0, min(100.0, harm_score)), 1)
+        propaganda_score = round(max(0.0, min(100.0, propaganda_score)), 1)
 
         from app.pipeline.scoring import compute_bs_index
-        bs_index = compute_bs_index(falsehood_score, spam_score, harm_score)
+        bs_index = compute_bs_index(falsehood_score, spam_score, harm_score, propaganda_score)
 
         # Evidence quality, misleadingness, sensationalism
         has_flags = len(top_flags) > 0
         evidence_quality = 8.5 if grounded_claims_with_evidence else 5.0
         misleadingness = 7.0 if falsehood_score > 35 else (3.0 if has_flags else 1.0)
-        sensationalism = 6.5 if (spam_score > 40 or harm_score > 40) else 1.5
+        sensationalism = 6.5 if (spam_score > 40 or harm_score > 40 or propaganda_score > 40) else 1.5
 
         if bs_index <= 30:
             summary = "Profile exhibits high overall factual consistency with no major spam or deceptive signals."
@@ -765,12 +839,15 @@ class DemoLLMProvider:
                 "falsehood": falsehood_score,
                 "spam": spam_score,
                 "harm": harm_score,
+                "propaganda": propaganda_score,
                 "evidence_quality": evidence_quality,
                 "misleadingness": misleadingness,
                 "sensationalism": sensationalism,
             },
             "summary": summary,
             "top_flags": unique_flags[:5],
+            "propaganda_profile": normalized_propaganda,
+            "propaganda_analysis_status": "analyzed",
         }
         log_dev_api_call(
             provider="llm (demo)",
