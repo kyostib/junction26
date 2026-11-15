@@ -1,163 +1,125 @@
-# BS Meter 🎯
+# BS Meter
 
-**BS Meter** calculates an explainable **"BS Index"** (0–100) for Twitter/X users based on their public tweets. It detects **falsehoods & unverified claims**, **spam & crypto/affiliate shills**, and **harmful content**.
+**BS Meter** calculates an explainable **"BS Index"** (0–100) for Twitter/X profiles by analyzing their public activity for **falsehoods**, **crypto/affiliate spam**, **harmful links**, **propaganda**, and **sensationalism**.
 
-The system is powered by **Context.dev** as its unified external gateway, hosted on FastAPI with a PostgreSQL backend, and comes with a **Chrome Extension** that injects real-time score overlay badges directly next to user handles on `x.com`.
+Powered by **Context.dev** as its unified gateway for headless X scraping, link uncloaking, and web grounding.
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
-  ┌─────────────────────────────────────────────────────────────┐
-  │                 Chrome Extension (x.com)                    │
-  │  - MutationObserver watches handles: [data-testid="User-Name"]│
-  │  - Injects Badge Pills: [✓ 12] [⚠️ 48] [🚨 78]              │
-  │  - Hover Popover: BS breakdown & Context.dev citations      │
-  └──────────────────────────────▲──────────────────────────────┘
-                                 │ POST /api/v1/overlay/twitter/batch
-                                 ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │                FastAPI Backend (Dockerized)                 │
-  │  - Cache-first architecture (sub-50ms responses for feed)   │
-  │  - Auto-enqueues background analysis for stale/new users    │
-  │  - CORS enabled for web & extension requests                │
-  └──────────────▲───────────────────────────────▲──────────────┘
-                 │ asyncpg                       │
-                 ▼                               ▼
-  ┌──────────────────────────────┐ ┌───────────────────────────┐
-  │      PostgreSQL 18 DB        │ │    Context.dev Gateway    │
-  │  - Profiles (unique handles) │ │ 1. Ingestion: scrape x.com│
-  │  - Cached analyses & scores  │ │ 2. Uncloak: scrape links  │
-  │  - Claims & evidence traces  │ │ 3. Ground: web.search     │
-  └──────────────────────────────┘ └───────────────────────────┘
+Chrome Extension (MV3)  ──┐
+[Profile pill & popover]  │ POST /api/v1/overlay/*
+[4-tab inspect modal   ]  │
+                          ├─► FastAPI Backend ──► PostgreSQL / SQLite
+                          │   [sub-50ms cache]    [profiles, claims, evidence]
+Website (/)               │   [async workers ]           ▲
+[Username search demo  ] ─┘   [web static    ]           │
+                                      │                  │
+                                      └──► Context.dev ──┘
+                                           ├─ scrape x.com (no API key)
+                                           ├─ uncloak & inspect links
+                                           └─ web.search claim grounding
 ```
 
 ---
 
-## Quickstart with Docker & PostgreSQL
+## Features
 
-The fastest way to spin up the PostgreSQL database and FastAPI backend:
-
-1. **Set your environment variables**:
-
-   ```bash
-   cp .env.example .env
-   # Add your CONTEXT_DEV_API_KEY in .env
-   ```
-
-2. **Start the containers**:
-
-   ```bash
-   docker compose up --build
-   ```
-
-3. **Check health**:
-   ```bash
-   curl http://localhost:8000/health
-   # {"status": "ok"}
-   ```
+- **Website (`/`)**: Direct web-based lookup for any `@username` or profile URL with real-time analysis polling.
+- **Chrome Extension (MV3)**: 
+  - Injects badge pills beside profile action buttons on `x.com` and `twitter.com`.
+  - Hover popover with 5-dimension risk meters; click to pin.
+  - Deep **Inspect Modal** with 4 tabs: **Overview**, **Propaganda & Bias**, **Stances & Claims**, and **Analyzed Posts**.
+  - Dynamic dark/light theme matching X natively.
+- **Severity-First Scoring**: A critical violation in any dimension dominates the score rather than being averaged away:
+  - `dominant = max(falsehood, spam, harm, propaganda, sensationalism)`
+  - `BS Index = min(100, dominant + (100 - dominant) * min(1.0, weighted_signal) * 0.2)`
+  - Score tiers: `[0-30]` Low BS &middot; `[31-60]` Caution &middot; `[61-100]` High BS &middot
 
 ---
 
-## Local Development (Without Docker)
+## Context.dev Integration
 
-Requires Python 3.11+.
+Context.dev acts as the unified external gateway:
+1. **Profile Ingestion (`client.web.scrape`)**: Bypasses bot detection and renders JS on `x.com/{user}` to extract posts, replies, and bio without Twitter API keys.
+2. **Link Uncloaking (`client.web.scrape`)**: Resolves `t.co` redirects and renders landing pages to flag crypto presales, phishing, and spam.
+3. **Claim Grounding (`client.web.search`)**: Queries authoritative sources and fact-checkers to verify user stances.
 
+---
+
+## Quickstart
+
+### Option A: Docker Compose (Recommended)
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+cp .env.example .env                  # Add your CONTEXT_DEV_API_KEY
+docker compose up --build -d
+```
+- Website: [http://localhost:8000](http://localhost:8000)
+- Health check: `curl http://localhost:8000/health` (`{"status":"ok"}`)
+
+### Option B: Local Dev (SQLite)
+```bash
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-To run with SQLite locally:
-
-```bash
 export DATABASE_URL="sqlite+aiosqlite:///./bs_meter.db"
 uvicorn app.main:app --reload
 ```
 
 ---
 
-## Run the Chrome Extension
+## Chrome Extension Setup (Recommended)
 
-The extension runs in Chrome on `x.com` and `twitter.com`. It sends profile handles to the BS Meter API; the API and database must be running separately.
+Download the extension directory form [Releases](https://github.com/kyostib/junction26/releases/tag/1.0) and follow the instructions there.
 
-### 1. Start the API
+## Chrome Extension Setup (From Source)
 
-Choose one:
-
-- **Use the hosted service:** set the extension API address to `https://api.bsmeter.tech` in step 3 below.
-- **Run locally:** start the Docker services using [Quickstart with Docker & PostgreSQL](#quickstart-with-docker--postgresql), then use `http://localhost:8000` as the API address. Confirm `http://localhost:8000/health` returns `{"status":"ok"}`.
-
-For real profile analysis, configure the API's Context.dev key in its `.env` file. The extension can display cached results without it, but new or stale profiles need the analysis providers configured to complete a scan.
-
-### 2. Load the extension in Chrome
-
-1. Clone or download this repository.
-2. In Chrome, open `chrome://extensions`.
-3. Turn on **Developer mode**.
-4. Click **Load unpacked** and select this repository's [`extension/`](extension/) directory.
-5. Pin **BS Meter** from Chrome's Extensions menu so its settings are easy to open.
-
-### 3. Connect it to the API
-
-1. Click the BS Meter toolbar icon.
-2. Leave **Enable** checked.
-3. In **API Address**, enter one of:
-   - `https://api.bsmeter.tech` for the hosted service.
-   - `http://localhost:8000` for a locally running API.
-4. Click **Save & Apply**. When Chrome asks, allow the extension to access that API address. The status dot should turn green when `/health` responds.
-
-Enter only the API origin; do not append `/api` or a trailing endpoint path.
-
-### 4. Try it on X
-
-Open or refresh [x.com](https://x.com). BS Meter adds a score badge beside recognized profile handles. The first lookup may show a checking indicator while the API queues analysis; completed results are cached for later lookups. Hover a badge to see its breakdown and available evidence links.
-
-Typical badges:
-
-- 🟢 `[✓ 14]` — lower risk signals
-- 🟡 `[⚠️ 48]` — caution
-- 🔴 `[🚨 78]` — higher risk signals
-- ⚪ `[⏳ Checking...]` — analysis queued or in progress
-
-If the extension shows as offline, open the API's `/health` URL in a browser and confirm the API address in the popup matches it. API address changes are applied to already-open X tabs; if a badge does not appear, refresh the X tab and check that **Enable** is on.
+1. Open `chrome://extensions` and enable **Developer mode**.
+2. Click **Load unpacked** and select the [`extension/`](extension/) directory.
+3. Open the extension popup, set **API Address** to `https://api.bsmeter.tech` (hosted) or `http://localhost:8000` (local), and click **Save & Apply** (status dot turns green).
+4. Visit any profile on [x.com](https://x.com) to view live scores and evidence.
 
 ---
 
-## API Endpoints
-
-### 1. Batch Overlay Lookup (Used by Chrome Extension)
-
-`POST /api/v1/overlay/twitter/batch`
-
-```json
-{
-  "usernames": ["elonmusk", "dr_who"]
-}
-```
-
-Returns instantaneous cached scores or marks unknown handles as `queued` while scheduling analysis in the background.
-
-### 2. Single Handle Overlay Lookup
-
-`GET /api/v1/overlay/twitter/{username}?refresh=false`
-
-### 3. Run Analysis in Terminal
-
-You can run a direct analysis from your command line:
+## CLI & Testing
 
 ```bash
+# Run analysis in terminal
 python -m app.cli elonmusk
+
+# Run test suite (36 tests)
+.venv/bin/pytest
 ```
 
 ---
 
-## How Context.dev Powers BS Meter
+## API Reference
 
-Context.dev serves as the **unified contact point**:
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | `GET` | Website & Profile Analysis Demo |
+| `/health` | `GET` | Health status check |
+| `/api/v1/analyses` | `POST` | Queue profile scan (`{"platform": "twitter", "profile_url": "handle"}`) |
+| `/api/v1/analyses/{id}` | `GET` | Poll scan status (`queued`, `running`, `completed`) & get full report |
+| `/api/v1/overlay/twitter/batch` | `POST` | Batch overlay lookup for extension (`{"usernames": ["..."]}`) |
+| `/api/v1/overlay/twitter/{username}` | `GET` | Single handle overlay lookup (`?refresh=false`) |
 
-1. **Twitter Scraping (`client.web.scrape`)**: Bypasses bot detection and renders the client-side JavaScript on `x.com/{username}` to extract recent tweets and profile metadata without needing an X API key.
-2. **Link Uncloaking & Inspection (`client.web.scrape`)**: Follows shortened `t.co` URLs and renders destination landing pages to inspect them for crypto presales, phishing, and affiliate spam.
-3. **Claim Grounding (`client.web.search`)**: Searches authoritative web sources to verify empirical claims.
+---
+
+## Configuration (`.env`)
+
+| Key | Default | Description |
+|---|---|---|
+| `CONTEXT_DEV_API_KEY` | `""` | Context.dev key for scraping, uncloaking, and search |
+| `DATABASE_URL` | `postgresql+asyncpg:...` | DB connection string (PostgreSQL or SQLite) |
+| `LLM_PROVIDER` | `mock` | Claim evaluation engine (`mock`, `openai`, `gemini`) |
+| `LLM_API_KEY` | `""` | API key if using `openai` or `gemini` |
+| `MAX_CLAIMS_TO_VERIFY` | `5` | Maximum claims verified per profile |
+| `MAX_TWEETS_TO_ANALYZE`| `10` | Maximum recent tweets analyzed per profile |
+
+---
+
+## License
+
+[MIT](LICENSE)
