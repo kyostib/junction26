@@ -4,8 +4,6 @@
 
 Powered by **Context.dev** as its unified gateway for headless X scraping, link uncloaking, and web grounding.
 
----
-
 ## Architecture
 
 ```
@@ -23,8 +21,6 @@ Website (/)               │   [async workers ]           ▲
                                            └─ web.search claim grounding
 ```
 
----
-
 ## Features
 
 - **Website (`/`)**: Direct web-based lookup for any `@username` or profile URL with real-time analysis polling.
@@ -38,16 +34,12 @@ Website (/)               │   [async workers ]           ▲
   - `BS Index = min(100, dominant + (100 - dominant) * min(1.0, weighted_signal) * 0.2)`
   - Score tiers: `[0-30]` Low BS &middot; `[31-60]` Caution &middot; `[61-100]` High BS &middot
 
----
-
 ## Context.dev Integration
 
 Context.dev acts as the unified external gateway:
 1. **Profile Ingestion (`client.web.scrape`)**: Bypasses bot detection and renders JS on `x.com/{user}` to extract posts, replies, and bio without Twitter API keys.
 2. **Link Uncloaking (`client.web.scrape`)**: Resolves `t.co` redirects and renders landing pages to flag crypto presales, phishing, and spam.
 3. **Claim Grounding (`client.web.search`)**: Queries authoritative sources and fact-checkers to verify user stances.
-
----
 
 ## Quickstart
 
@@ -67,8 +59,6 @@ export DATABASE_URL="sqlite+aiosqlite:///./bs_meter.db"
 uvicorn app.main:app --reload
 ```
 
----
-
 ## Chrome Extension Setup (Recommended)
 
 Download the extension directory form [Releases](https://github.com/kyostib/junction26/releases/tag/1.0) and follow the instructions there.
@@ -80,8 +70,6 @@ Download the extension directory form [Releases](https://github.com/kyostib/junc
 3. Open the extension popup, set **API Address** to `https://api.bsmeter.tech` (hosted) or `http://localhost:8000` (local), and click **Save & Apply** (status dot turns green).
 4. Visit any profile on [x.com](https://x.com) to view live scores and evidence.
 
----
-
 ## CLI & Testing
 
 ```bash
@@ -92,7 +80,6 @@ python -m app.cli elonmusk
 .venv/bin/pytest
 ```
 
----
 
 ## API Reference
 
@@ -105,8 +92,6 @@ python -m app.cli elonmusk
 | `/api/v1/overlay/twitter/batch` | `POST` | Batch overlay lookup for extension (`{"usernames": ["..."]}`) |
 | `/api/v1/overlay/twitter/{username}` | `GET` | Single handle overlay lookup (`?refresh=false`) |
 
----
-
 ## Configuration (`.env`)
 
 | Key | Default | Description |
@@ -117,8 +102,6 @@ python -m app.cli elonmusk
 | `LLM_API_KEY` | `""` | API key if using `openai` or `gemini` |
 | `MAX_CLAIMS_TO_VERIFY` | `5` | Maximum claims verified per profile |
 | `MAX_TWEETS_TO_ANALYZE`| `10` | Maximum recent tweets analyzed per profile |
-
----
 
 ## License
 
