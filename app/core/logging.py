@@ -1,8 +1,7 @@
 import logging
 import sys
-from app.core.dev_logger import log_dev_api_call
 
-__all__ = ["configure_logging", "log_dev_api_call"]
+__all__ = ["configure_logging"]
 
 
 def configure_logging() -> None:

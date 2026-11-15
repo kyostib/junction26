@@ -405,19 +405,6 @@
     }
   }
 
-  function resolveApiUrl(pathOrUrl) {
-    if (!pathOrUrl) return null;
-    if (typeof pathOrUrl !== "string") return null;
-    if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
-      return safeHttpUrl(pathOrUrl);
-    }
-    const base = (API_BASE_URL || "").replace(/\/+$/, "");
-    if (base && pathOrUrl.startsWith("/")) {
-      return safeHttpUrl(`${base}${pathOrUrl}`);
-    }
-    return null;
-  }
-
   function safePercent(value) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : 0;
@@ -485,14 +472,6 @@
         e.preventDefault();
         hideOverlay(true);
         openInspectModal(handle, data);
-      };
-    }
-
-    const closeBtn = overlay.querySelector("#bsOverlayClose");
-    if (closeBtn) {
-      closeBtn.onclick = (e) => {
-        e.stopPropagation();
-        hideOverlay(true);
       };
     }
 
@@ -635,7 +614,6 @@
         return false;
       return true;
     });
-    const totalExternalLinks = cleanScrapedLinks.length;
 
     let claims = details.claims || [];
     if ((!claims || claims.length === 0) && topFlags.length > 0) {
@@ -673,7 +651,6 @@
     const activeTechniquesCount = propaganda.filter(
       (item) => (Number(item.score) || 0) > 0 || (Number(item.count) || 0) > 0,
     ).length;
-    const evidenceBreakdown = details.claim_evidence_breakdown || {};
 
     const propagandaHtml = propaganda.length
       ? propaganda
