@@ -447,8 +447,8 @@
 }
 
 .bs-evidence-link {
-  color: var(--bs-link-color) !important;
-  text-decoration: underline !important;
+  color: var(--bs-link-hover) !important;
+  text-decoration: none !important;
   word-break: break-all !important;
   font-size: 10px !important;
   display: block !important;
@@ -456,7 +456,8 @@
 }
 
 .bs-evidence-link:hover {
-  color: var(--bs-link-hover) !important;
+  color: var(--bs-link-color) !important;
+  text-decoration: underline !important;
 }
 
 .bs-powered-by {
@@ -609,7 +610,7 @@
 .bs-modal-tabs {
   display: flex !important;
   flex-wrap: wrap !important;
-  gap: 6px !important;
+  gap: 18px !important;
   padding: 10px 18px !important;
   background: var(--bs-bg-header) !important;
   border-bottom: 1px solid var(--bs-border) !important;
@@ -1115,7 +1116,6 @@
 .bs-post-links {
   margin-top: 8px !important;
   padding-top: 6px !important;
-  border-top: 1px dashed var(--bs-border) !important;
   font-size: 11px !important;
   color: var(--bs-text-body) !important;
   display: flex !important;

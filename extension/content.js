@@ -1012,10 +1012,8 @@
             ${
               postLinksList.length > 0
                 ? `
-              <div class="bs-post-links" style="margin-top:10px; padding-top:8px; border-top:1px dashed var(--bs-border); display:flex; flex-direction:column; gap:6px; align-items:stretch;">
-                <div style="font-size:11px; font-weight:700; color:var(--bs-text-secondary); display:flex; align-items:center; gap:5px;">
-                  ${lucideIcon("link", 12)} Considered Links (${postLinksList.length})
-                </div>
+              <div class="bs-post-links" style="margin-top:10px; padding-top:8px; display:flex; flex-direction:column; gap:6px; align-items:stretch;">
+                
                 ${postLinksList
                   .map((l) => {
                     const actualUrl = l.url || l.resolved_url || "";
@@ -1034,7 +1032,6 @@
                         ${safeHttpUrl(actualUrl) ? `<a href="${escapeHtml(safeHttpUrl(actualUrl))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ${lucideIcon("external-link", 11)}</a>` : ""}
                       </div>
                       ${title ? `<div class="bs-link-title">${escapeHtml(title)}</div>` : ""}
-                      <div class="bs-link-url-text">${safeHttpUrl(actualUrl) ? escapeHtml(safeHttpUrl(actualUrl)) : escapeHtml(actualUrl)}</div>
                       ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview)}…”</div>` : ""}
                       ${isError ? `<div class="bs-link-error-note">${lucideIcon("alert-triangle", 12)} Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
                     </div>
@@ -1119,7 +1116,7 @@
           cleanScrapedLinks.length > 0
             ? `
           <div class="bs-inspect-section" style="margin-top:16px;">
-            <div class="bs-section-title">${lucideIcon("link", 14)} Considered Links (${totalExternalLinks})</div>
+           
             ${cleanScrapedLinks
               .map((l) => {
                 const actualUrl = l.resolved_url || l.url || "";
@@ -1140,7 +1137,6 @@
                     ${safeHttpUrl(actualUrl) ? `<a href="${escapeHtml(safeHttpUrl(actualUrl))}" target="_blank" rel="noopener noreferrer" class="bs-evidence-link">Open URL ${lucideIcon("external-link", 11)}</a>` : ""}
                   </div>
                   <div class="bs-link-title">${escapeHtml(title)}</div>
-                  <div class="bs-link-url-text">${safeHttpUrl(actualUrl) ? escapeHtml(safeHttpUrl(actualUrl)) : escapeHtml(actualUrl)}</div>
                   ${preview ? `<div class="bs-link-preview"><b>Page Preview:</b> “${escapeHtml(preview.trim())}…”</div>` : ""}
                   ${isError ? `<div class="bs-link-error-note">${lucideIcon("alert-triangle", 12)} Note: Target URL could not be fully resolved or returned an error (${escapeHtml(l.error)})</div>` : ""}
                 </div>
