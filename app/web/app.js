@@ -122,4 +122,4 @@ form.addEventListener("submit", async (event) => {
 });
 
 const extensionLink = document.querySelector("#extension-link");
-extensionLink.href = "https://github.com/kyostib/junction26";
+extensionLink.href = "https://github.com/kyostib/junction26/releases";
