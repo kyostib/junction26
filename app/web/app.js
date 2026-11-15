@@ -4,6 +4,7 @@ const button = document.querySelector('#scan-button');
 const statusBox = document.querySelector('#scan-status');
 const resultBox = document.querySelector('#scan-result');
 const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+API_BASE = 'https://api.bsmeter.tech';
 
 document.querySelector('.example').addEventListener('click', () => {
   input.value = 'elonmusk';
